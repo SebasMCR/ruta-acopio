@@ -1,0 +1,1688 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ruta de Acopio</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<!-- SDK de Firebase (compat): cubre autenticación anónima y base de datos (Firestore).
+     Los PDFs y notas de voz también se guardan en Firestore (como texto codificado),
+     así no hace falta activar Firebase Storage ni el plan de pago. No requiere cuenta
+     de quien usa la página, solo del proyecto que crea Sebastián en Firebase — ver
+     FIREBASE_CONFIG más abajo. -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<style>
+  :root{
+    --bg:#f5f6f7;
+    --surface:#ffffff;
+    --surface-2:#eceef1;
+    --border:#dde1e6;
+    --text:#141a1f;
+    --text-muted:#57626c;
+    --accent:#0b4a6f;
+    --accent-strong:#083752;
+    --accent-contrast:#ffffff;
+    --accent-soft:#e3edf3;
+    --danger:#b3261e;
+    --danger-soft:#fbe9e7;
+    --warning:#8a5300;
+    --warning-soft:#fff2df;
+    --success:#186a41;
+    --success-soft:#e3f5ea;
+    --chip-pendiente:#57626c;
+    --chip-pendiente-soft:#eceef1;
+    --shadow:0 1px 2px rgba(20,26,31,.06), 0 1px 12px rgba(20,26,31,.05);
+    color-scheme:light;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#11161a;
+      --surface:#1a2126;
+      --surface-2:#222a30;
+      --border:#333e46;
+      --text:#eef2f5;
+      --text-muted:#9aa7b2;
+      --accent:#5aa6d6;
+      --accent-strong:#7ec1e8;
+      --accent-contrast:#0b1a24;
+      --accent-soft:#1c3140;
+      --danger:#ff8a7a;
+      --danger-soft:#3a1f1c;
+      --warning:#ffbf5c;
+      --warning-soft:#3a2a10;
+      --success:#5fd39a;
+      --success-soft:#123626;
+      --chip-pendiente:#9aa7b2;
+      --chip-pendiente-soft:#232c33;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 1px 12px rgba(0,0,0,.25);
+      color-scheme:dark;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#11161a;
+    --surface:#1a2126;
+    --surface-2:#222a30;
+    --border:#333e46;
+    --text:#eef2f5;
+    --text-muted:#9aa7b2;
+    --accent:#5aa6d6;
+    --accent-strong:#7ec1e8;
+    --accent-contrast:#0b1a24;
+    --accent-soft:#1c3140;
+    --danger:#ff8a7a;
+    --danger-soft:#3a1f1c;
+    --warning:#ffbf5c;
+    --warning-soft:#3a2a10;
+    --success:#5fd39a;
+    --success-soft:#123626;
+    --chip-pendiente:#9aa7b2;
+    --chip-pendiente-soft:#232c33;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 1px 12px rgba(0,0,0,.25);
+    color-scheme:dark;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    font-size:15px;
+    line-height:1.45;
+  }
+  .mono{font-family:"JetBrains Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums;}
+  #app{max-width:760px;margin:0 auto;padding-inline:16px;padding-block:0 32px;}
+
+  .topbar{
+    position:sticky; top:env(safe-area-inset-top,0px); z-index:20;
+    background:var(--bg);
+    padding-block:14px 10px;
+    border-bottom:1px solid var(--border);
+    margin-bottom:16px;
+  }
+  .brand{display:flex; align-items:baseline; gap:8px; margin-bottom:12px;}
+  .brand h1{font-size:19px; font-weight:800; letter-spacing:-.01em; margin:0;}
+  .brand span{font-size:12px; color:var(--text-muted); font-weight:600;}
+  .segmented{display:flex; background:var(--surface-2); border-radius:11px; padding:3px; gap:2px;}
+  .segmented button{
+    flex:1; border:0; background:transparent; color:var(--text-muted);
+    font:inherit; font-weight:700; font-size:13.5px; padding:9px 6px; border-radius:9px;
+    cursor:pointer;
+  }
+  .segmented button.active{background:var(--surface); color:var(--accent); box-shadow:var(--shadow);}
+
+  .readonly-banner{
+    background:var(--warning-soft); color:var(--warning); border:1px solid var(--warning);
+    border-radius:10px; padding:10px 12px; font-size:13px; font-weight:600; margin-bottom:16px;
+  }
+  .error-banner{
+    background:var(--danger-soft); color:var(--danger); border:1px solid var(--danger);
+    border-radius:10px; padding:10px 12px; font-size:13px; font-weight:600; margin-bottom:16px;
+  }
+  .form-msg{font-size:12.5px; font-weight:700; margin-top:6px;}
+  .form-msg.err{color:var(--danger);}
+  .form-msg.ok{color:var(--success);}
+
+  section.block{margin-bottom:28px;}
+  .block-head{display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:10px;}
+  .block-head h2{font-size:15px; font-weight:800; margin:0; letter-spacing:-.01em;}
+  .block-head .count{font-size:12px; color:var(--text-muted); font-weight:600;}
+
+  .stat-row{display:grid; grid-template-columns:repeat(auto-fit,minmax(84px,1fr)); gap:8px; margin-bottom:18px;}
+  .stat-tile{background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:10px 12px; box-shadow:var(--shadow);}
+  .stat-tile .n{font-family:"JetBrains Mono",monospace; font-size:20px; font-weight:700; line-height:1;}
+  .stat-tile .l{font-size:11px; color:var(--text-muted); font-weight:600; margin-top:4px;}
+  .stat-tile.alerta .n{color:var(--danger);}
+
+  .card{
+    background:var(--surface); border:1px solid var(--border); border-radius:14px;
+    padding:13px 14px; margin-bottom:10px; box-shadow:var(--shadow);
+  }
+  .card.crit-alta{border-left:4px solid var(--danger);}
+  .card.crit-media{border-left:4px solid var(--warning);}
+  .card.crit-baja{border-left:4px solid var(--success);}
+
+  .row{display:flex; align-items:flex-start; justify-content:space-between; gap:10px;}
+  .title-line{font-weight:700; font-size:14.5px;}
+  .sub-line{color:var(--text-muted); font-size:12.5px; margin-top:2px;}
+  .meta-line{font-size:12.5px; color:var(--text-muted); margin-top:6px; display:flex; flex-wrap:wrap; gap:4px 12px;}
+  .meta-line b{color:var(--text); font-weight:600;}
+
+  .chip{
+    display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:700;
+    padding:3px 8px; border-radius:999px; white-space:nowrap; letter-spacing:.01em;
+  }
+  .chip-alta{background:var(--danger-soft); color:var(--danger);}
+  .chip-media{background:var(--warning-soft); color:var(--warning);}
+  .chip-baja{background:var(--success-soft); color:var(--success);}
+  .chip-pendiente{background:var(--chip-pendiente-soft); color:var(--chip-pendiente);}
+  .chip-recogido{background:var(--accent-soft); color:var(--accent);}
+  .chip-entregado{background:var(--success-soft); color:var(--success);}
+
+  .btn{
+    font:inherit; font-weight:700; font-size:13px; border-radius:10px; border:1px solid transparent;
+    padding:9px 13px; cursor:pointer; display:inline-flex; align-items:center; gap:6px; justify-content:center;
+  }
+  .btn-primary{background:var(--accent); color:var(--accent-contrast);}
+  .btn-primary:active{background:var(--accent-strong);}
+  .btn-ghost{background:var(--surface-2); color:var(--text);}
+  .btn-outline{background:transparent; color:var(--accent); border-color:var(--accent);}
+  .btn-danger{background:transparent; color:var(--danger); border-color:var(--danger);}
+  .btn-sm{padding:6px 10px; font-size:12px; border-radius:8px;}
+  .btn-block{width:100%;}
+  .btn[disabled]{opacity:.45; cursor:not-allowed;}
+  .icon-btn{background:var(--surface-2); border:1px solid var(--border); border-radius:8px; width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; font-size:13px; color:var(--text);}
+
+  .actions-row{display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;}
+
+  form.editform{
+    background:var(--surface); border:1px solid var(--border); border-radius:14px;
+    padding:14px; box-shadow:var(--shadow);
+  }
+  form.editform h3{font-size:13.5px; margin:0 0 10px; font-weight:800;}
+  .field{margin-bottom:10px;}
+  .field label{display:block; font-size:11.5px; font-weight:700; color:var(--text-muted); margin-bottom:4px; text-transform:uppercase; letter-spacing:.03em;}
+  .field-row{display:grid; grid-template-columns:1fr 1fr; gap:8px;}
+  input,select,textarea{
+    width:100%; font:inherit; font-size:14px; background:var(--surface-2); color:var(--text);
+    border:1px solid var(--border); border-radius:9px; padding:9px 10px;
+  }
+  textarea{resize:vertical; min-height:56px;}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent); outline-offset:1px;}
+  .hint{font-size:11.5px; color:var(--text-muted); margin-top:3px;}
+  .form-actions{display:flex; gap:8px; margin-top:4px;}
+
+  .stop{margin-bottom:16px;}
+  .stop-head{display:flex; align-items:center; gap:10px; margin-bottom:8px;}
+  .stop-num{
+    width:26px; height:26px; border-radius:50%; background:var(--accent); color:var(--accent-contrast);
+    display:flex; align-items:center; justify-content:center; font-weight:800; font-size:12.5px; flex-shrink:0;
+  }
+  .stop-name{font-weight:800; font-size:15.5px;}
+  .stop-addr{font-size:12.5px; color:var(--text-muted);}
+  .stop-reorder{display:flex; flex-direction:column; gap:2px; margin-left:auto;}
+
+  .oc-item{border-top:1px solid var(--border); padding-top:10px; margin-top:10px;}
+  .oc-item:first-child{border-top:0; padding-top:0; margin-top:0;}
+
+  .notes-toggle{background:none; border:0; color:var(--accent); font:inherit; font-weight:700; font-size:12.5px; padding:8px 0 0; cursor:pointer;}
+  .notes-panel{margin-top:8px; background:var(--surface-2); border-radius:10px; padding:10px;}
+  .log-entry{font-size:12.5px; margin-bottom:8px; padding-bottom:8px; border-bottom:1px solid var(--border);}
+  .log-entry:last-child{border-bottom:0; margin-bottom:0; padding-bottom:0;}
+  .log-meta{color:var(--text-muted); font-size:11px; margin-bottom:2px;}
+  audio{width:100%; height:34px; margin-top:2px;}
+  .note-add{display:flex; gap:6px; margin-top:8px;}
+  .note-add textarea{min-height:38px; flex:1;}
+  .voice-label{display:inline-flex; align-items:center; gap:6px; background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:8px 11px; font-size:12.5px; font-weight:700; cursor:pointer; color:var(--text);}
+  .voice-label input{display:none;}
+  .voice-rec-box{display:flex; flex-wrap:wrap; align-items:center; gap:8px;}
+  .rec-dot{display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--danger); margin-right:5px; animation:recpulse 1s infinite;}
+  @keyframes recpulse{0%,100%{opacity:1;}50%{opacity:.25;}}
+
+  .route-cta{position:sticky; bottom:env(safe-area-inset-bottom,0px); background:var(--bg); padding-block:10px; border-top:1px solid var(--border); margin-top:4px; z-index:15;}
+
+  .empty{color:var(--text-muted); font-size:13px; background:var(--surface); border:1px dashed var(--border); border-radius:12px; padding:16px; text-align:center;}
+  .example-tag{font-size:10px; font-weight:800; color:var(--accent); background:var(--accent-soft); padding:2px 6px; border-radius:6px; letter-spacing:.03em; text-transform:uppercase;}
+  a.maplink{color:var(--accent); text-decoration:none; font-weight:700;}
+  a.maplink:hover{text-decoration:underline;}
+  @media (min-width:640px){ .field-row3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px;} }
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand"><h1>Ruta de Acopio</h1><span id="orgTag">INNOVECA · Materiales</span></div>
+    <nav class="segmented" id="segmented">
+      <button data-view="admin" id="tabAdmin">Planificación</button>
+      <button data-view="ruta" id="tabRuta">Ruta del día</button>
+    </nav>
+  </header>
+  <div id="dbBanner" class="error-banner" hidden>No se pudo conectar con la base de datos. Revisá tu conexión a internet y recargá la página.</div>
+  <div id="readonlyBanner" class="readonly-banner" hidden>Modo solo lectura: esta vista no tiene permiso para editar. Pide acceso de Contribuidor o Editor para marcar recepciones y agregar notas.</div>
+  <div id="nombreBar" class="hint" style="margin-bottom:14px;"></div>
+  <div id="toast" class="error-banner" hidden></div>
+  <main id="main"></main>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- state ----------
+  // Enlace del chofer: esta app ya es una página normal (no corre dentro de
+  // ningún iframe), así que location.href refleja siempre la URL pública real.
+  function driverLink(){ return location.origin + location.pathname + '#recolector'; }
+  var collectorMode = /^#recolector$/i.test(location.hash||'');
+  var db=null;
+  var MAX_MEDIA_BYTES = 700*1024; // límite práctico para caber en un documento de Firestore (~1MB) codificado en base64
+  var bootDone=false; // true once the initial capability resolution attempt has finished (success or fail)
+  var canWrite=null; // true/false/null(unknown)
+  var myId=null;     // nombre visible de quien está usando esta sesión (no hay cuentas; ver getMyNombre/setMyNombre)
+  var myNombre=null;
+  var editingNombre=false;
+  var stores=[]; // {id,nombre,direccionCorta,lat,lng,notas,orden,example} — se reutilizan entre viajes, nunca se borran al cerrar un viaje
+  var ocs=[];    // {id,numero,proyecto,storeId,descripcion,criticidad,destino,receptorNombre,receptorTelefono,fechaPactada,condicionEntrega,estado,fechaRecogida,fechaEntregada,recogidoPorId,entregadoPorId,log,example}
+  var viajes=[]; // {id,cerradoAt,cerradoPorId,ocs:[...snapshot],resumen:{total,entregadas,recogidas,pendientes}} — historial de viajes cerrados
+  var puntoInicio=null; // {nombre,direccionCorta,lat,lng} — punto fijo de salida del conductor (bodega/oficina), configurado una sola vez
+  var view = collectorMode ? 'ruta' : ((window.matchMedia && window.matchMedia('(max-width: 640px)').matches) ? 'ruta' : 'admin');
+  var editingStoreId=null; // null = add mode
+  var editingOcId=null;
+  var ocFormMode='oc'; // 'oc' | 'item' — modo del formulario "Agregar OC/ítem" cuando no se está editando uno existente
+  var editingPuntoInicio=false;
+  var expandedNotes={}; // ocId -> bool
+  var expandedTrips={}; // tripId -> bool
+  var confirming={}; // key -> timeout id
+  var voiceRec={}; // ocId -> {state:'recording'|'preview'|'saving'|'error', recorder, stream, chunks, startedAt, timerId, blob, blobUrl, mimeType, error}
+
+  function $(sel,root){return (root||document).querySelector(sel);}
+  function $all(sel,root){return Array.prototype.slice.call((root||document).querySelectorAll(sel));}
+  function esc(s){ s = (s===undefined||s===null)?'':String(s); return s.replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+  function uid(){ try{ return crypto.randomUUID(); }catch(e){ return 'id'+Date.now()+Math.random().toString(16).slice(2); } }
+
+  // ---------- helpers: coords / maps ----------
+  function parseCoords(input){
+    if(!input) return null;
+    input = String(input).trim();
+    var m = input.match(/^(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)$/);
+    if(m) return {lat:parseFloat(m[1]), lng:parseFloat(m[2])};
+    m = input.match(/@(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/);
+    if(m) return {lat:parseFloat(m[1]), lng:parseFloat(m[2])};
+    m = input.match(/!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)/);
+    if(m) return {lat:parseFloat(m[1]), lng:parseFloat(m[2])};
+    m = input.match(/[?&](?:q|ll|query)=(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)/);
+    if(m) return {lat:parseFloat(m[1]), lng:parseFloat(m[2])};
+    return null;
+  }
+  function storeDestParam(s){
+    return (s && s.lat!=null && s.lng!=null) ? (s.lat+','+s.lng) : ((s && s.direccionCorta) || '');
+  }
+  function storeMapsUrl(s){
+    var dest = storeDestParam(s);
+    if(!dest) return null;
+    return 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(dest)+'&travelmode=driving';
+  }
+  function textDestMapsUrl(addr){
+    if(!addr) return null;
+    return 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(addr)+'&travelmode=driving';
+  }
+  function fullRouteUrl(orderedStores, origin){
+    if(!orderedStores.length) return null;
+    var last = orderedStores[orderedStores.length-1];
+    var wps = orderedStores.slice(0,-1).map(storeDestParam).filter(Boolean);
+    var url = 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(storeDestParam(last))+'&travelmode=driving';
+    if(wps.length) url += '&waypoints='+encodeURIComponent(wps.join('|'));
+    if(origin) url += '&origin='+encodeURIComponent(origin);
+    return url;
+  }
+  function fmtDate(d){
+    if(!d) return '';
+    try{
+      var dt = new Date(d+'T00:00:00');
+      if(isNaN(dt.getTime())) return d;
+      return String(dt.getDate()).padStart(2,'0')+'/'+String(dt.getMonth()+1).padStart(2,'0')+'/'+dt.getFullYear();
+    }catch(e){ return d; }
+  }
+  function fmtTs(iso){
+    try{
+      var d = new Date(iso);
+      return d.toLocaleDateString('es-CR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('es-CR',{hour:'2-digit',minute:'2-digit'});
+    }catch(e){ return ''; }
+  }
+  var CRIT_LABEL={alta:'Alta',media:'Media',baja:'Baja'};
+  var EST_LABEL={pendiente:'Pendiente',recogido:'Recogida',entregado:'Entregada'};
+
+  // ---------- Firebase bootstrap (sin cuentas: autenticación anónima) ----------
+  // Reemplazá estos valores por los de tu propio proyecto de Firebase
+  // (Firebase console -> Configuración del proyecto -> tus apps -> config del SDK).
+  // Son datos públicos (no son contraseñas): quedan visibles en el código de la
+  // página igual que en cualquier app web que use Firebase.
+  var FIREBASE_CONFIG = {
+    apiKey: "AIzaSyCC497gKVlUfW-AYhnitDbFigocE2JCqyM",
+    authDomain: "innoveca-ruta-de-materiales.firebaseapp.com",
+    projectId: "innoveca-ruta-de-materiales",
+    storageBucket: "innoveca-ruta-de-materiales.firebasestorage.app",
+    messagingSenderId: "164293917076",
+    appId: "1:164293917076:web:5a42ac0d54b707e642f781"
+  };
+  function getMyNombre(){
+    try{ return localStorage.getItem('ra_nombre') || null; }catch(e){ return null; }
+  }
+  function setMyNombre(n){
+    myNombre = n;
+    try{ localStorage.setItem('ra_nombre', n); }catch(e){}
+  }
+  async function boot(){
+    try{
+      if(!firebase.apps || !firebase.apps.length){ firebase.initializeApp(FIREBASE_CONFIG); }
+      if(!firebase.auth().currentUser){ await firebase.auth().signInAnonymously(); }
+      db = firebase.firestore();
+      myNombre = getMyNombre();
+      var anonUid = (firebase.auth().currentUser && firebase.auth().currentUser.uid) || '';
+      myId = myNombre || ('Sin nombre ('+anonUid.slice(0,4)+')');
+      canWrite = true;
+    }catch(e){
+      console.warn('firebase init failed', e);
+      db = null;
+    }
+    bootDone = true;
+    updateBanners();
+    if(db){
+      // Primero una lectura puntual (más confiable que depender solo del
+      // stream en vivo para el primer pintado) — así la pantalla nunca se
+      // queda en "0" solo porque la suscripción en vivo tardó o no llegó.
+      await reloadDataOnce();
+      hardRender();
+      db.collection('stores').onSnapshot(function(snap){
+        stores = snap.docs.map(function(d){ var raw=d.data()||{}; var o={}; for(var k in raw){ o[k]=raw[k]; } o.id=d.id; return o; });
+        stores.sort(function(a,b){ return (a.orden||0)-(b.orden||0); });
+        render();
+      }, function(err){ console.warn('stores snapshot error', err); dbBroken=true; updateBanners(); });
+      db.collection('ocs').onSnapshot(function(snap){
+        ocs = snap.docs.map(function(d){ var raw=d.data()||{}; var o={}; for(var k in raw){ o[k]=raw[k]; } o.id=d.id; if(!Array.isArray(o.log)) o.log=[]; return o; });
+        render();
+      }, function(err){ console.warn('ocs snapshot error', err); dbBroken=true; updateBanners(); });
+      db.collection('viajes').onSnapshot(function(snap){
+        viajes = snap.docs.map(function(d){ var raw=d.data()||{}; var v={}; for(var k in raw){ v[k]=raw[k]; } v.id=d.id; if(!Array.isArray(v.ocs)) v.ocs=[]; return v; });
+        viajes.sort(function(a,b){ return (b.cerradoAt||'').localeCompare(a.cerradoAt||''); });
+        render();
+      }, function(err){ console.warn('viajes snapshot error', err); });
+      db.doc('config/puntoInicio').onSnapshot(function(snap){
+        puntoInicio = snap.exists ? (snap.data()||null) : null;
+        render();
+      }, function(err){ console.warn('puntoInicio snapshot error', err); });
+    } else {
+      hardRender();
+    }
+  }
+  var dbBroken=false;
+  function updateBanners(){
+    var ro = document.getElementById('readonlyBanner');
+    ro.hidden = !(canWrite===false);
+    var db_ = document.getElementById('dbBanner');
+    db_.hidden = !(!db || dbBroken);
+    if(!db_.hidden && dbBroken && lastReloadError){
+      db_.textContent = 'No se pudo conectar con la base de datos. Detalle técnico: '+lastReloadError+'. Revisá tu conexión a internet y recargá la página.';
+    }
+  }
+
+  // Lectura puntual de las 4 colecciones/documento — se usa al arrancar y
+  // desde el botón "Actualizar datos" como respaldo si el stream en vivo
+  // no llegó o se cayó.
+  var lastReloadError = null;
+  function captureReloadErr(e){
+    console.warn('reloadDataOnce error', e);
+    if(!lastReloadError) lastReloadError = (e && (e.code || e.message)) ? ((e.code?('['+e.code+'] '):'')+(e.message||'')) : String(e);
+  }
+  async function reloadDataOnce(){
+    if(!db) return;
+    var ok = true;
+    lastReloadError = null;
+    try{
+      var storesSnap = await db.collection('stores').get();
+      stores = storesSnap.docs.map(function(d){ var raw=d.data()||{}; var o={}; for(var k in raw){ o[k]=raw[k]; } o.id=d.id; return o; });
+      stores.sort(function(a,b){ return (a.orden||0)-(b.orden||0); });
+    }catch(e){ ok=false; captureReloadErr(e); }
+    try{
+      var ocsSnap = await db.collection('ocs').get();
+      ocs = ocsSnap.docs.map(function(d){ var raw=d.data()||{}; var o={}; for(var k in raw){ o[k]=raw[k]; } o.id=d.id; if(!Array.isArray(o.log)) o.log=[]; return o; });
+    }catch(e){ ok=false; captureReloadErr(e); }
+    try{
+      var viajesSnap = await db.collection('viajes').get();
+      viajes = viajesSnap.docs.map(function(d){ var raw=d.data()||{}; var v={}; for(var k in raw){ v[k]=raw[k]; } v.id=d.id; if(!Array.isArray(v.ocs)) v.ocs=[]; return v; });
+      viajes.sort(function(a,b){ return (b.cerradoAt||'').localeCompare(a.cerradoAt||''); });
+    }catch(e){ ok=false; captureReloadErr(e); }
+    try{
+      var piSnap = await db.doc('config/puntoInicio').get();
+      puntoInicio = piSnap.exists ? (piSnap.data()||null) : null;
+    }catch(e){ ok=false; captureReloadErr(e); }
+    dbBroken = !ok;
+    updateBanners();
+    return ok;
+  }
+
+  // ---------- seed example data (first load only, when store is empty) ----------
+  async function seedIfEmpty(){
+    if(!db) return;
+    try{
+      var snap = await db.collection('stores').limit(1).get();
+      if(snap.empty && canWrite!==false){
+        var storeId = uid();
+        await db.collection('stores').doc(storeId).set({
+          nombre:'Global Supply', direccionCorta:'La Uruca, San José, 200m norte de Purdy Motor',
+          lat:9.9459, lng:-84.1084, notas:'Contacto: Idalberto Barrero · +506 8831 1400', orden:10, example:true, createdAt:new Date().toISOString()
+        });
+        await db.collection('ocs').add({
+          numero:'OC-0255', proyecto:'509-037 · TAC DEI - NUTRICARE', storeId:storeId,
+          descripcion:'Ductería — Ducto flexible 16"', criticidad:'media',
+          destino:'Hospital San Vicente de Paul — portón a la derecha de la salida de ambulancias, costado oeste',
+          receptorNombre:'Lleiner Garita', receptorTelefono:'+506 8832 1786',
+          fechaPactada:'2026-09-17', condicionEntrega:'Retirar martes 22 de setiembre',
+          estado:'pendiente', log:[], example:true, createdAt:new Date().toISOString()
+        });
+      }
+    }catch(e){ /* best-effort seed, ignore failures (e.g. read-only viewer) */ }
+  }
+
+  // ---------- CRUD: stores ----------
+  async function saveStore(data){
+    if(!db) throw new Error('sin_db');
+    if(editingStoreId){
+      await db.collection('stores').doc(editingStoreId).update(data);
+      var existing = stores.find(function(s){return s.id===editingStoreId;});
+      if(existing){ for(var k in data){ existing[k]=data[k]; } }
+      return editingStoreId;
+    } else {
+      var maxOrden = stores.reduce(function(m,s){return Math.max(m, s.orden||0);},0);
+      data.orden = maxOrden+10;
+      data.createdAt = new Date().toISOString();
+      var ref = await db.collection('stores').add(data);
+      var localCopy = {}; for(var k2 in data){ localCopy[k2]=data[k2]; } localCopy.id = ref.id;
+      stores.push(localCopy);
+      stores.sort(function(a,b){ return (a.orden||0)-(b.orden||0); });
+      return ref.id;
+    }
+  }
+  async function deleteStore(id){
+    var used = ocs.some(function(o){ return o.storeId===id; });
+    if(used){ flashConfirm('store-'+id, true); return; }
+    await db.collection('stores').doc(id).delete();
+  }
+  async function swapStoreOrder(id, dir){
+    var idx = stores.findIndex(function(s){return s.id===id;});
+    var swapIdx = idx+dir;
+    if(idx<0 || swapIdx<0 || swapIdx>=stores.length) return;
+    var a=stores[idx], b=stores[swapIdx];
+    var ao=a.orden||0, bo=b.orden||0;
+    await Promise.all([
+      db.collection('stores').doc(a.id).update({orden:bo}),
+      db.collection('stores').doc(b.id).update({orden:ao})
+    ]);
+  }
+
+  // ---------- punto de inicio (salida fija del chofer) ----------
+  function haversineKm(lat1,lng1,lat2,lng2){
+    var R=6371;
+    var dLat=(lat2-lat1)*Math.PI/180;
+    var dLng=(lng2-lng1)*Math.PI/180;
+    var a=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)*Math.sin(dLng/2);
+    var c=2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+    return R*c;
+  }
+  async function savePuntoInicio(data){
+    if(!db) throw new Error('sin_db');
+    var body = {
+      nombre: data.nombre||'',
+      direccionCorta: data.direccionCorta||'',
+      lat: data.lat!=null ? data.lat : null,
+      lng: data.lng!=null ? data.lng : null,
+      updatedAt: new Date().toISOString()
+    };
+    await db.doc('config/puntoInicio').set(body);
+    puntoInicio = body;
+  }
+  async function recalcularOrdenPorCercania(){
+    if(!db) throw new Error('sin_db');
+    if(!puntoInicio || puntoInicio.lat==null || puntoInicio.lng==null) throw new Error('sin_punto_inicio');
+    var withCoords = stores.filter(function(s){return s.lat!=null && s.lng!=null;});
+    var withoutCoords = stores.filter(function(s){return s.lat==null || s.lng==null;});
+    var remaining = withCoords.slice();
+    var ordered = [];
+    var curLat = puntoInicio.lat, curLng = puntoInicio.lng;
+    while(remaining.length){
+      var bestIdx=0, bestDist=Infinity;
+      for(var i=0;i<remaining.length;i++){
+        var d = haversineKm(curLat,curLng,remaining[i].lat,remaining[i].lng);
+        if(d<bestDist){ bestDist=d; bestIdx=i; }
+      }
+      var next = remaining.splice(bestIdx,1)[0];
+      ordered.push(next);
+      curLat=next.lat; curLng=next.lng;
+    }
+    var finalList = ordered.concat(withoutCoords);
+    await Promise.all(finalList.map(function(s, idx){
+      var orden=(idx+1)*10;
+      return db.collection('stores').doc(s.id).update({orden:orden});
+    }));
+    finalList.forEach(function(s, idx){ s.orden=(idx+1)*10; });
+    stores.sort(function(a,b){ return (a.orden||0)-(b.orden||0); });
+  }
+
+  // ---------- CRUD: ocs ----------
+  async function saveOc(data){
+    if(!db) throw new Error('sin_db');
+    if(editingOcId){
+      await db.collection('ocs').doc(editingOcId).update(data);
+      var existing = ocs.find(function(o){return o.id===editingOcId;});
+      if(existing){ for(var k in data){ existing[k]=data[k]; } }
+      return editingOcId;
+    } else {
+      data.estado='pendiente'; data.log=[]; data.createdAt=new Date().toISOString();
+      var ref = await db.collection('ocs').add(data);
+      var localCopy = {}; for(var k2 in data){ localCopy[k2]=data[k2]; } localCopy.id = ref.id;
+      ocs.push(localCopy);
+      return ref.id;
+    }
+  }
+  async function deleteOc(id){
+    await db.collection('ocs').doc(id).delete();
+  }
+  async function advanceEstado(oc, to){
+    var patch = {estado:to};
+    var ts = new Date().toISOString();
+    if(to==='recogido'){ patch.fechaRecogida=ts; patch.recogidoPorId=myId||null; }
+    if(to==='entregado'){ patch.fechaEntregada=ts; patch.entregadoPorId=myId||null; }
+    await db.collection('ocs').doc(oc.id).update(patch);
+  }
+  async function addLogEntry(oc, entry){
+    entry.ts = new Date().toISOString();
+    entry.authorId = myId||null;
+    var freshLog = (ocs.find(function(o){return o.id===oc.id;})||oc).log||[];
+    var newLog = freshLog.concat([entry]);
+    await db.collection('ocs').doc(oc.id).update({log:newLog});
+  }
+
+  // ---------- CRUD: viajes (cerrar viaje = archivar las OCs activas y arrancar de cero) ----------
+  // Las tiendas NUNCA se tocan acá: se guardan una sola vez y sirven para todos los viajes futuros.
+  async function closeTrip(){
+    if(!db) throw new Error('sin_db');
+    var snapshotOcs = ocs.map(function(o){
+      var store = stores.find(function(s){return s.id===o.storeId;});
+      var copy = {}; for(var k in o){ copy[k]=o[k]; }
+      copy.storeNombre = store ? store.nombre : '';
+      return copy;
+    });
+    var resumen = {
+      total: snapshotOcs.length,
+      entregadas: snapshotOcs.filter(function(o){return o.estado==='entregado';}).length,
+      recogidas: snapshotOcs.filter(function(o){return o.estado==='recogido';}).length,
+      pendientes: snapshotOcs.filter(function(o){return o.estado==='pendiente';}).length
+    };
+    var tripDoc = {
+      cerradoAt: new Date().toISOString(),
+      cerradoPorId: myId||null,
+      ocs: snapshotOcs,
+      resumen: resumen
+    };
+    var ref = await db.collection('viajes').add(tripDoc);
+    var localCopy = {}; for(var k2 in tripDoc){ localCopy[k2]=tripDoc[k2]; } localCopy.id = ref.id;
+    viajes.push(localCopy);
+    viajes.sort(function(a,b){ return (b.cerradoAt||'').localeCompare(a.cerradoAt||''); });
+    // ahora sí, vaciar las OCs activas para que el próximo viaje arranque limpio.
+    // las tiendas quedan intactas.
+    var toDelete = ocs.slice();
+    ocs = [];
+    var results = await Promise.allSettled(toDelete.map(function(o){ return db.collection('ocs').doc(o.id).delete(); }));
+    var failed = results.filter(function(r){ return r.status==='rejected'; }).length;
+    if(failed){ throw new Error('parcial: '+failed+' OC(s) no se pudieron borrar de la lista activa, pero el viaje ya quedó guardado en el historial.'); }
+  }
+
+  var toastTimer=null;
+  function alertLikeBanner(msg, ms){
+    var el = document.getElementById('toast');
+    if(!el) return;
+    el.textContent = msg;
+    el.hidden = false;
+    if(toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ el.hidden = true; }, ms||6000);
+  }
+
+  function flashConfirm(key, deny){
+    confirming[key]= deny? 'deny':'confirm';
+    render();
+    setTimeout(function(){ delete confirming[key]; render(); }, 2200);
+  }
+
+  // ---------- render root ----------
+  // rebuild(): always regenerates #main from current state.
+  // render(): same, but preserves whatever a person is mid-typing in any
+  //   input/textarea/select (used for background data updates, e.g. a
+  //   db snapshot arriving while someone is filling a form).
+  // hardRender(): same as rebuild(), used after a deliberate action
+  //   (Editar, Cancelar, guardado con éxito, cambio de vista) where the
+  //   fresh state should win over whatever was on screen before.
+  function captureDraft(){
+    var d={};
+    $all('#main input, #main textarea, #main select', document).forEach(function(el){
+      if(!el.id || el.type==='file') return;
+      d[el.id]=el.value;
+    });
+    return d;
+  }
+  function applyDraft(d){
+    Object.keys(d).forEach(function(id){
+      var el=document.getElementById(id);
+      if(el && el.type!=='file') el.value=d[id];
+    });
+  }
+  function rebuild(){
+    $('#tabAdmin').classList.toggle('active', view==='admin');
+    $('#tabRuta').classList.toggle('active', view==='ruta');
+    var main = $('#main');
+    if(bootDone && !db){
+      main.innerHTML = renderNoDbScreen();
+      wireNoDbScreen(main);
+      return;
+    }
+    main.innerHTML = view==='admin' ? renderAdminHtml() : renderRutaHtml();
+    wireCommon(main);
+    if(view==='admin') wireAdmin(main); else wireRuta(main);
+    resolveNames(main);
+  }
+  function renderNoDbScreen(){
+    return '<div class="empty" style="margin-top:32px; text-align:left; padding:22px;">'+
+      '<div style="font-size:16px; font-weight:800; color:var(--text); margin-bottom:10px;">⚠️ No se pudo conectar con la base de datos</div>'+
+      '<div style="margin-bottom:10px; color:var(--text);">Tranquilo: esto <b>no borra</b> las tiendas ni las OCs que ya registraste — siguen guardadas online. Lo más común es que no haya conexión a internet en este momento.</div>'+
+      '<div style="margin-bottom:14px; color:var(--text);"><b>Qué hacer:</b> revisá tu conexión a internet y tocá reintentar. Si sigue igual, cerrá y volvé a abrir esta página.</div>'+
+      '<button class="btn btn-primary btn-sm" id="retryBootBtn" type="button">Reintentar conexión</button>'+
+    '</div>';
+  }
+  function wireNoDbScreen(root){
+    var b = root.querySelector('#retryBootBtn');
+    if(b) b.onclick = function(){
+      b.disabled = true; b.textContent = 'Conectando...';
+      boot().then(function(){ hardRender(); }).catch(function(){ hardRender(); });
+    };
+  }
+  function render(){
+    var draft = captureDraft();
+    rebuild();
+    applyDraft(draft);
+  }
+  function hardRender(){
+    rebuild();
+  }
+
+  // ================= ADMIN VIEW =================
+  function renderAdminHtml(){
+    var pend = ocs.filter(function(o){return o.estado!=='entregado';}).length;
+    var crit = ocs.filter(function(o){return o.criticidad==='alta' && o.estado!=='entregado';}).length;
+    var html = '';
+    html += '<div class="stat-row">'+
+      '<div class="stat-tile"><div class="n mono">'+stores.length+'</div><div class="l">Tiendas</div></div>'+
+      '<div class="stat-tile"><div class="n mono">'+ocs.length+'</div><div class="l">OCs totales</div></div>'+
+      '<div class="stat-tile"><div class="n mono">'+pend+'</div><div class="l">Sin entregar</div></div>'+
+      '<div class="stat-tile'+(crit?' alerta':'')+'"><div class="n mono">'+crit+'</div><div class="l">Críticas activas</div></div>'+
+    '</div>';
+    html += '<div class="actions-row" style="margin:-8px 0 14px;"><button class="btn btn-ghost btn-sm" type="button" data-act="reload-data">🔄 Actualizar datos</button></div>';
+
+    html += renderDriverLinkSection();
+
+    html += renderCloseTripBar();
+
+    html += renderPuntoInicioSection();
+
+    // stores section
+    html += '<section class="block"><div class="block-head"><h2>Tiendas / puntos de recolección</h2><span class="count">'+stores.length+'</span></div>';
+    html += '<div class="hint" style="margin-bottom:8px;">Se guardan una sola vez acá y quedan disponibles para planear cualquier viaje futuro — cerrar un viaje nunca las borra.</div>';
+    html += '<div id="storesList">'+ (stores.length? stores.map(renderStoreCard).join('') : '<div class="empty">Todavía no hay tiendas. Agrega la primera abajo.</div>') +'</div>';
+    html += renderStoreForm();
+    html += '</section>';
+
+    // ocs section
+    html += '<section class="block"><div class="block-head"><h2>Órdenes de compra (viaje actual)</h2><span class="count">'+ocs.length+'</span></div>';
+    if(!ocs.length){
+      html += '<div class="empty">Todavía no hay OCs registradas para el viaje actual.</div>';
+    } else {
+      var sorted = ocs.slice().sort(function(a,b){
+        var rank={alta:0,media:1,baja:2};
+        var r = (rank[a.criticidad]||1)-(rank[b.criticidad]||1);
+        if(r!==0) return r;
+        return (a.fechaPactada||'').localeCompare(b.fechaPactada||'');
+      });
+      html += '<div id="ocsList">'+ sorted.map(function(o){return renderOcCard(o,true);}).join('') +'</div>';
+    }
+    html += renderOcForm();
+    html += '</section>';
+
+    html += renderTripsHistory();
+    return html;
+  }
+
+  function renderCloseTripBar(){
+    if(canWrite===false) return '';
+    var confirmKey = 'close-trip';
+    var confirmState = confirming[confirmKey];
+    if(!ocs.length){
+      return '<div class="empty" style="margin-bottom:20px;">No hay OCs activas para cerrar como viaje todavía.</div>';
+    }
+    var pend = ocs.filter(function(o){return o.estado!=='entregado';}).length;
+    if(confirmState==='confirm'){
+      return '<div class="card" style="margin-bottom:20px;border-left:4px solid var(--warning);">'+
+        '<div class="title-line">¿Cerrar este viaje?</div>'+
+        '<div class="sub-line">Se van a archivar '+ocs.length+' OC(s) en el historial'+(pend? (' — <b>'+pend+' todavía sin marcar como entregadas</b>') : '')+'. Después la lista de "Órdenes de compra" queda vacía para empezar un viaje nuevo. Las tiendas no se tocan.</div>'+
+        '<div class="actions-row">'+
+          '<button class="btn btn-danger btn-sm" data-act="confirm-close-trip">Sí, archivar y empezar viaje nuevo</button>'+
+          '<button class="btn btn-ghost btn-sm" data-act="cancel-close-trip">Cancelar</button>'+
+        '</div>'+
+      '</div>';
+    }
+    return '<div class="actions-row" style="margin-bottom:20px;">'+
+      '<button class="btn btn-outline btn-sm" data-act="close-trip">📦 Cerrar viaje actual y archivar ('+ocs.length+' OC'+(ocs.length===1?'':'s')+')</button>'+
+    '</div>';
+  }
+
+  function renderTripsHistory(){
+    if(!viajes.length) return '';
+    var html = '<section class="block"><div class="block-head"><h2>Historial de viajes</h2><span class="count">'+viajes.length+'</span></div>';
+    html += viajes.map(function(v){
+      var isOpen = !!expandedTrips[v.id];
+      var r = v.resumen || {total:(v.ocs||[]).length, entregadas:0, recogidas:0, pendientes:0};
+      var fecha = '';
+      try{ var d=new Date(v.cerradoAt); fecha = d.toLocaleDateString('es-CR',{day:'2-digit',month:'2-digit',year:'numeric'})+' '+d.toLocaleTimeString('es-CR',{hour:'2-digit',minute:'2-digit'}); }catch(e){ fecha = v.cerradoAt||''; }
+      var out = '<div class="card">'+
+        '<div class="row"><div>'+
+          '<div class="title-line">Viaje cerrado el '+esc(fecha)+'</div>'+
+          '<div class="sub-line">'+r.total+' OC(s) · '+r.entregadas+' entregadas · '+r.recogidas+' recogidas · '+r.pendientes+' sin recoger</div>'+
+        '</div></div>'+
+        '<button class="notes-toggle" data-act="toggle-trip" data-id="'+v.id+'">'+(isOpen?'Ocultar detalle ▲':'Ver OCs de este viaje ▼')+'</button>';
+      if(isOpen){
+        out += '<div class="notes-panel">'+ (v.ocs||[]).map(function(o){
+          return '<div class="log-entry"><b class="mono">'+esc(o.numero||'—')+'</b> · '+esc(o.storeNombre||'—')+' · '+ (CRIT_LABEL[o.criticidad]||'Media') +' · '+ (EST_LABEL[o.estado]||'Pendiente') +
+            (o.destino? ('<br>Entregado en: '+esc(o.destino)) : '') +
+          '</div>';
+        }).join('') + '</div>';
+      }
+      out += '</div>';
+      return out;
+    }).join('');
+    html += '</section>';
+    return html;
+  }
+
+  function renderDriverLinkSection(){
+    var link = driverLink();
+    var waText = encodeURIComponent('Acá está tu enlace para el modo chofer de Ruta de Acopio, para marcar recogidas y entregas: '+link);
+    return '<section class="block"><div class="block-head"><h2>🔗 Enlace para el chofer</h2></div>'+
+      '<div class="hint" style="margin-bottom:8px;">Es la misma página, pero abre directo en modo chofer (sin panel de administración) y no necesita ninguna cuenta. Compartíselo una sola vez — lo puede guardar en su teléfono.</div>'+
+      '<div class="card">'+
+        '<div class="field" style="margin-bottom:10px;"><input id="driverLinkInput" class="mono" readonly value="'+esc(link)+'" onclick="this.select()" style="width:100%;"></div>'+
+        '<div class="actions-row">'+
+          '<button class="btn btn-outline btn-sm" type="button" data-act="copy-driver-link">📋 Copiar enlace</button>'+
+          '<a class="btn btn-outline btn-sm" target="_blank" rel="noopener" href="https://wa.me/?text='+waText+'">🟢 Enviar por WhatsApp</a>'+
+        '</div>'+
+        '<div id="driverLinkMsg" class="form-msg"></div>'+
+      '</div>'+
+    '</section>';
+  }
+
+  function renderPuntoInicioSection(){
+    var html = '<section class="block"><div class="block-head"><h2>Punto de salida del chofer</h2></div>';
+    html += '<div class="hint" style="margin-bottom:8px;">Bodega u oficina donde arranca cada viaje. Se guarda una sola vez y se usa para ordenar la ruta por cercanía y como origen alternativo en Google Maps.</div>';
+    if(puntoInicio && !editingPuntoInicio){
+      var coordsTxt = (puntoInicio.lat!=null && puntoInicio.lng!=null) ? (puntoInicio.lat.toFixed(5)+', '+puntoInicio.lng.toFixed(5)) : 'sin coordenadas';
+      var mapsUrl = storeMapsUrl(puntoInicio);
+      html += '<div class="card">'+
+        '<div class="row"><div>'+
+          '<div class="title-line">🚩 '+esc(puntoInicio.nombre||'Punto de salida')+'</div>'+
+          '<div class="sub-line">'+esc(puntoInicio.direccionCorta||'')+'</div>'+
+          '<div class="sub-line mono">'+coordsTxt+(mapsUrl?' · <a class="maplink" target="_blank" rel="noopener" href="'+mapsUrl+'">Ver en Maps ↗</a>':'')+'</div>'+
+        '</div></div>'+
+        (canWrite!==false ? '<div class="actions-row"><button class="btn btn-ghost btn-sm" type="button" data-act="edit-punto-inicio">Editar</button></div>' : '')+
+      '</div>';
+    } else if(canWrite!==false){
+      html += '<form class="editform" id="puntoInicioForm">'+
+        '<div class="field"><label>Nombre</label><input id="pi_nombre" required value="'+esc(puntoInicio?puntoInicio.nombre:'')+'" placeholder="Ej. Bodega INNOVECA"></div>'+
+        '<div class="field"><label>Dirección corta</label><input id="pi_dir" required value="'+esc(puntoInicio?puntoInicio.direccionCorta:'')+'" placeholder="Ej. Zona Industrial, Pavas"></div>'+
+        '<div class="field"><label>Coordenadas o enlace de Google Maps</label><input id="pi_coords" required value="'+(puntoInicio && puntoInicio.lat!=null?(puntoInicio.lat+', '+puntoInicio.lng):'')+'" placeholder="9.9459, -84.1084 o pega el link de Maps"></div>'+
+        '<div class="form-actions">'+
+          '<button type="submit" class="btn btn-primary">Guardar punto de salida</button>'+
+          (puntoInicio? '<button type="button" class="btn btn-ghost" id="puntoInicioCancel">Cancelar</button>' : '')+
+        '</div>'+
+        '<div id="puntoInicioFormMsg" class="form-msg"></div>'+
+      '</form>';
+    } else {
+      html += '<div class="empty">Todavía no se configuró un punto de salida.</div>';
+    }
+    html += '</section>';
+    return html;
+  }
+
+  function renderStoreCard(s){
+    var isEditing = editingStoreId===s.id;
+    var mapsUrl = storeMapsUrl(s);
+    var coordsTxt = (s.lat!=null && s.lng!=null) ? (s.lat.toFixed(5)+', '+s.lng.toFixed(5)) : 'sin coordenadas';
+    var denyMsg = confirming['store-'+s.id]==='deny';
+    var confirmingDel = confirming['store-'+s.id]==='confirm';
+    return '<div class="card" data-store-id="'+s.id+'">'+
+      '<div class="row"><div>'+
+        '<div class="title-line">'+esc(s.nombre)+ (s.example?' <span class="example-tag">Ejemplo</span>':'') +'</div>'+
+        '<div class="sub-line">'+esc(s.direccionCorta||'')+'</div>'+
+        '<div class="sub-line mono">'+coordsTxt+(mapsUrl?' · <a class="maplink" target="_blank" rel="noopener" href="'+mapsUrl+'">Ver en Maps ↗</a>':'')+'</div>'+
+        (s.notas? '<div class="sub-line">'+esc(s.notas)+'</div>' : '') +
+      '</div></div>'+
+      (canWrite!==false ? (
+        '<div class="actions-row">'+
+          '<button class="btn btn-ghost btn-sm" data-act="edit-store" data-id="'+s.id+'">Editar</button>'+
+          '<button class="btn btn-danger btn-sm" data-act="del-store" data-id="'+s.id+'">'+(denyMsg?'Tiene OCs asignadas':(confirmingDel?'¿Seguro? Toca de nuevo':'Eliminar'))+'</button>'+
+        '</div>'
+      ) : '') +
+    '</div>';
+  }
+
+  function renderStoreForm(){
+    var editing = stores.find(function(s){return s.id===editingStoreId;});
+    var title = editing ? 'Editar tienda' : 'Agregar tienda';
+    if(canWrite===false){
+      return '<div class="empty">Solo lectura: no puedes agregar tiendas en esta vista.</div>';
+    }
+    return '<form class="editform" id="storeForm">'+
+      '<h3>'+title+'</h3>'+
+      '<div class="field"><label>Nombre de la tienda / proveedor</label><input id="sf_nombre" required value="'+esc(editing?editing.nombre:'')+'" placeholder="Ej. Global Supply"></div>'+
+      '<div class="field"><label>Dirección corta</label><input id="sf_dir" required value="'+esc(editing?editing.direccionCorta:'')+'" placeholder="Ej. La Uruca, 200m norte de Purdy Motor"></div>'+
+      '<div class="field"><label>Coordenadas o enlace de Google Maps</label><input id="sf_coords" value="'+(editing && editing.lat!=null? (editing.lat+', '+editing.lng):'')+'" placeholder="9.9459, -84.1084 o pega el link de Maps"></div>'+
+      '<div class="field"><label>Notas (contacto, horario, etc.)</label><textarea id="sf_notas" placeholder="Opcional">'+esc(editing?editing.notas:'')+'</textarea></div>'+
+      '<div class="form-actions">'+
+        '<button type="submit" class="btn btn-primary">'+(editing?'Guardar cambios':'Agregar tienda')+'</button>'+
+        (editing? '<button type="button" class="btn btn-ghost" id="storeCancel">Cancelar</button>' : '')+
+      '</div>'+
+      '<div id="storeFormMsg" class="form-msg"></div>'+
+    '</form>';
+  }
+
+  function renderOcCard(o, showStore, restrict){
+    var store = stores.find(function(s){return s.id===o.storeId;});
+    var isOpen = !!expandedNotes[o.id];
+    var mapsDest = textDestMapsUrl(o.destino);
+    var confirmingDel = confirming['oc-'+o.id]==='confirm';
+    var actions='';
+    if(canWrite!==false){
+      if(o.estado==='pendiente') actions += '<button class="btn btn-primary btn-sm" data-act="oc-recogido" data-id="'+o.id+'">Marcar recogida</button>';
+      else if(o.estado==='recogido') actions += '<button class="btn btn-primary btn-sm" data-act="oc-entregado" data-id="'+o.id+'">Marcar entregada</button>';
+      if(!restrict){
+        actions += '<button class="btn btn-ghost btn-sm" data-act="edit-oc" data-id="'+o.id+'">Editar</button>';
+        actions += '<button class="btn btn-danger btn-sm" data-act="del-oc" data-id="'+o.id+'">'+(confirmingDel?'¿Seguro? Toca de nuevo':'Eliminar')+'</button>';
+      }
+    }
+    var isItem = o.tipo==='item';
+    var titleTxt = isItem ? (o.descripcion || '(ítem sin descripción)') : (o.numero||'(sin número)');
+    return '<div class="card crit-'+(o.criticidad||'media')+'" data-oc-id="'+o.id+'">'+
+      '<div class="row"><div>'+
+        '<div class="title-line'+(isItem?'':' mono')+'">'+esc(titleTxt)+ (isItem?' <span class="example-tag">Ítem</span>':'') + (o.example?' <span class="example-tag">Ejemplo</span>':'') +'</div>'+
+        '<div class="sub-line">'+esc(o.proyecto||'')+'</div>'+
+        (isItem && o.numero? '<div class="sub-line">Ref.: '+esc(o.numero)+'</div>' : '') +
+        (!isItem && o.descripcion? '<div class="sub-line">'+esc(o.descripcion)+'</div>' : '') +
+      '</div>'+
+      '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;">'+
+        '<span class="chip chip-'+(o.criticidad||'media')+'">'+ (CRIT_LABEL[o.criticidad]||'Media') +'</span>'+
+        '<span class="chip chip-'+(o.estado||'pendiente')+'">'+ (EST_LABEL[o.estado]||'Pendiente') +'</span>'+
+      '</div></div>'+
+      '<div class="meta-line">'+
+        (showStore? ('<span><b>Recoger en:</b> '+esc(store?store.nombre:'—')+'</span>') : '') +
+        (o.fechaPactada? ('<span><b>Entrega pactada:</b> '+fmtDate(o.fechaPactada)+'</span>') : '') +
+        (o.condicionEntrega? ('<span><b>Retiro:</b> '+esc(o.condicionEntrega)+'</span>') : '') +
+      '</div>'+
+      '<div class="meta-line">'+
+        (o.destino? ('<span><b>Entregar en:</b> '+esc(o.destino)+ (mapsDest?' · <a class="maplink" target="_blank" rel="noopener" href="'+mapsDest+'">Maps ↗</a>':'') +'</span>') : '') +
+      '</div>'+
+      (o.receptorNombre? '<div class="meta-line"><span><b>Recibe:</b> '+esc(o.receptorNombre)+(o.receptorTelefono?' · '+esc(o.receptorTelefono):'')+'</span></div>' : '')+
+      renderPdfRow(o, restrict)+
+      '<div class="actions-row">'+actions+'</div>'+
+      '<button class="notes-toggle" data-act="toggle-notes" data-id="'+o.id+'">'+(isOpen?'Ocultar notas ▲':'Observaciones y notas de voz ('+(o.log?o.log.length:0)+') ▼')+'</button>'+
+      (isOpen ? renderNotesPanel(o) : '') +
+    '</div>';
+  }
+
+  function renderPdfRow(o, restrict){
+    var pid = 'pdf_status_'+o.id;
+    var isItem = o.tipo==='item';
+    var viewLink = o.pdfMediaId ? ('<button type="button" class="btn btn-outline btn-sm" data-act="view-pdf" data-media-id="'+esc(o.pdfMediaId)+'">📄 '+(isItem?'Ver comprobante ↗':'Ver PDF de la OC ↗')+'</button>') : '';
+    var uploadLabel = (canWrite!==false && !restrict) ? (
+      '<label class="voice-label" style="margin-top:0;">'+(o.pdfMediaId?'Reemplazar':'📎 '+(isItem?'Adjuntar comprobante (opcional)':'Adjuntar PDF de la OC'))+'<input type="file" accept="application/pdf" data-act="pdf-input" data-id="'+o.id+'"></label>'
+    ) : '';
+    if(!viewLink && !uploadLabel) return '';
+    return '<div class="actions-row">'+viewLink+uploadLabel+'</div><span id="'+pid+'" class="hint"></span>';
+  }
+
+  async function viewPdf(mediaId, btn){
+    var win = null;
+    try{ win = window.open('', '_blank'); }catch(e){}
+    var prevText = btn ? btn.textContent : '';
+    if(btn){ btn.disabled = true; btn.textContent='Abriendo...'; }
+    try{
+      var d = await getMedia(mediaId);
+      var blob = base64ToBlob(d.data, d.mime||'application/pdf');
+      var objUrl = URL.createObjectURL(blob);
+      if(win && !win.closed){ win.location = objUrl; }
+      else { var a=document.createElement('a'); a.href=objUrl; a.target='_blank'; a.rel='noopener'; a.click(); }
+    }catch(e){
+      if(win && !win.closed) win.close();
+      alertLikeBanner('No se pudo abrir el PDF. Probá de nuevo.');
+    }
+    if(btn){ btn.disabled = false; btn.textContent = prevText; }
+  }
+
+  function renderNotesPanel(o){
+    var log = o.log||[];
+    var entries = log.length? log.map(function(e){
+      if(e.type==='audio'){
+        return '<div class="log-entry"><div class="log-meta">'+fmtTs(e.ts)+' · '+esc(e.authorId||'Alguien')+'</div>'+
+          '<div class="audio-note" data-audio-media-id="'+esc(e.mediaId||'')+'">'+
+            '<button class="btn btn-outline btn-sm" type="button" data-act="play-audio-note">▶️ Reproducir nota de voz</button>'+
+          '</div></div>';
+      }
+      return '<div class="log-entry"><div class="log-meta">'+fmtTs(e.ts)+' · '+esc(e.authorId||'Alguien')+'</div>'+esc(e.text)+'</div>';
+    }).join('') : '<div class="log-meta">Sin observaciones todavía.</div>';
+    var addUi = '';
+    if(canWrite!==false){
+      addUi += '<div class="note-add">'+
+          '<textarea placeholder="Escribir observación..." id="note_txt_'+o.id+'"></textarea>'+
+          '<button class="btn btn-primary btn-sm" data-act="add-note" data-id="'+o.id+'">Agregar</button>'+
+        '</div>';
+      addUi += renderVoiceRecorder(o.id);
+    }
+    return '<div class="notes-panel">'+entries+addUi+'</div>';
+  }
+
+  function fmtRecSecs(s){
+    var m=Math.floor(s/60), r=s%60;
+    return m+':'+(r<10?'0':'')+r;
+  }
+
+  function renderVoiceRecorder(id){
+    var st = voiceRec[id];
+    if(!st){
+      return '<div style="margin-top:8px;"><button class="btn btn-outline btn-sm" type="button" data-act="voice-start" data-id="'+id+'">🎙️ Grabar nota de voz</button></div>';
+    }
+    if(st.state==='error'){
+      return '<div class="voice-rec-box" style="margin-top:8px;">'+
+        '<button class="btn btn-outline btn-sm" type="button" data-act="voice-start" data-id="'+id+'">🎙️ Grabar nota de voz</button>'+
+        '<span class="hint" style="color:var(--danger);">'+esc(st.error||'No se pudo grabar.')+'</span></div>';
+    }
+    if(st.state==='requesting'){
+      return '<div class="voice-rec-box" style="margin-top:8px;"><span class="hint">Pidiendo permiso de micrófono...</span></div>';
+    }
+    if(st.state==='recording'){
+      return '<div class="voice-rec-box" style="margin-top:8px;">'+
+        '<span class="chip chip-alta"><span class="rec-dot"></span>Grabando <span id="rec_timer_'+id+'">0:00</span></span>'+
+        '<button class="btn btn-primary btn-sm" type="button" data-act="voice-stop" data-id="'+id+'">⏹️ Detener</button>'+
+        '<button class="btn btn-ghost btn-sm" type="button" data-act="voice-cancel" data-id="'+id+'">Cancelar</button>'+
+      '</div>';
+    }
+    if(st.state==='preview'){
+      return '<div class="voice-rec-box" style="margin-top:8px; flex-direction:column; align-items:stretch;">'+
+        '<audio controls src="'+st.blobUrl+'"></audio>'+
+        '<div class="voice-rec-box">'+
+          '<button class="btn btn-primary btn-sm" type="button" data-act="voice-save" data-id="'+id+'">✅ Guardar nota</button>'+
+          '<button class="btn btn-ghost btn-sm" type="button" data-act="voice-discard" data-id="'+id+'">🗑️ Descartar</button>'+
+        '</div>'+
+        (st.error?'<span class="hint" style="color:var(--danger);">'+esc(st.error)+'</span>':'')+
+      '</div>';
+    }
+    if(st.state==='saving'){
+      return '<div class="voice-rec-box" style="margin-top:8px;"><span class="hint">Subiendo nota de voz...</span></div>';
+    }
+    return '<div style="margin-top:8px;"><button class="btn btn-outline btn-sm" type="button" data-act="voice-start" data-id="'+id+'">🎙️ Grabar nota de voz</button></div>';
+  }
+
+  function pickAudioMime(){
+    var candidates=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus','audio/ogg'];
+    for(var i=0;i<candidates.length;i++){
+      if(window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
+    }
+    return '';
+  }
+
+  function blobToBase64(blob){
+    return new Promise(function(resolve,reject){
+      var reader = new FileReader();
+      reader.onload = function(){
+        var res = reader.result||'';
+        var idx = res.indexOf(',');
+        resolve(idx>=0 ? res.slice(idx+1) : res);
+      };
+      reader.onerror = function(){ reject(reader.error||new Error('read_error')); };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function base64ToBlob(b64, mime){
+    var bin = atob(b64);
+    var arr = new Uint8Array(bin.length);
+    for(var i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+    return new Blob([arr], {type:mime||'application/octet-stream'});
+  }
+
+  // ---------- PDFs y notas de voz: guardados como texto (base64) en Firestore,
+  // en la colección "media" — evita depender de Firebase Storage (que requiere
+  // el plan de pago Blaze). Cada documento cabe en el límite de ~1MB de Firestore.
+  async function saveMedia(kind, ocId, base64, mime){
+    if(!db) throw new Error('sin_db');
+    var ref = await db.collection('media').add({
+      kind: kind, ocId: ocId, mime: mime, data: base64, createdAt: new Date().toISOString()
+    });
+    return ref.id;
+  }
+  async function getMedia(mediaId){
+    if(!db) throw new Error('sin_db');
+    var snap = await db.collection('media').doc(mediaId).get();
+    if(!snap.exists) throw new Error('media_no_encontrada');
+    return snap.data();
+  }
+
+  async function voiceStart(id){
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder){
+      voiceRec[id]={state:'error', error:'Este navegador no soporta grabar audio. Probá desde Chrome o Safari actualizados.'};
+      hardRender(); return;
+    }
+    voiceRec[id]={state:'requesting'};
+    hardRender();
+    try{
+      var stream = await navigator.mediaDevices.getUserMedia({audio:true});
+      var mime = pickAudioMime();
+      var rec = mime ? new MediaRecorder(stream,{mimeType:mime}) : new MediaRecorder(stream);
+      var chunks = [];
+      rec.ondataavailable = function(e){ if(e.data && e.data.size>0) chunks.push(e.data); };
+      rec.onstop = function(){
+        var finalMime = rec.mimeType || mime || 'audio/webm';
+        var blob = new Blob(chunks, {type:finalMime});
+        try{ stream.getTracks().forEach(function(t){t.stop();}); }catch(e2){}
+        var prev = voiceRec[id]||{};
+        if(prev.timerId) clearInterval(prev.timerId);
+        voiceRec[id] = {state:'preview', blob:blob, blobUrl:URL.createObjectURL(blob), mimeType:finalMime, startedAt:prev.startedAt};
+        hardRender();
+      };
+      voiceRec[id] = {state:'recording', recorder:rec, stream:stream, startedAt:Date.now()};
+      rec.start();
+      voiceRec[id].timerId = setInterval(function(){
+        var st = voiceRec[id];
+        if(!st || st.state!=='recording') return;
+        var secs = Math.floor((Date.now()-st.startedAt)/1000);
+        var el = document.getElementById('rec_timer_'+id);
+        if(el) el.textContent = fmtRecSecs(secs);
+        if(secs>=90) voiceStop(id); // tope de 1:30 — así la nota entra cómoda en el límite de tamaño de Firestore
+      }, 500);
+      hardRender();
+    }catch(e){
+      voiceRec[id]={state:'error', error:'No se pudo acceder al micrófono. Revisá los permisos del navegador para este sitio.'};
+      hardRender();
+    }
+  }
+
+  function voiceStop(id){
+    var st = voiceRec[id];
+    if(!st || st.state!=='recording') return;
+    try{ st.recorder.stop(); }catch(e){}
+  }
+
+  function voiceCancel(id){
+    var st = voiceRec[id];
+    if(!st) return;
+    if(st.timerId) clearInterval(st.timerId);
+    if(st.recorder && st.state==='recording'){
+      st.recorder.onstop = null;
+      try{ st.recorder.stop(); }catch(e){}
+    }
+    if(st.stream){ try{ st.stream.getTracks().forEach(function(t){t.stop();}); }catch(e){} }
+    delete voiceRec[id];
+    hardRender();
+  }
+
+  function voiceDiscard(id){
+    var st = voiceRec[id];
+    if(st && st.blobUrl){ try{ URL.revokeObjectURL(st.blobUrl); }catch(e){} }
+    delete voiceRec[id];
+    hardRender();
+  }
+
+  async function voiceSave(id){
+    var st = voiceRec[id];
+    if(!st || !st.blob) return;
+    if(!db){ st.error='No se pudo guardar (sin conexión).'; hardRender(); return; }
+    var blob = st.blob, blobUrl = st.blobUrl, mimeType = st.mimeType;
+    if(blob.size > MAX_MEDIA_BYTES){
+      voiceRec[id] = {state:'preview', blob:blob, blobUrl:blobUrl, mimeType:mimeType, error:'La nota quedó muy pesada para guardarla. Probá una más corta.'};
+      hardRender();
+      return;
+    }
+    voiceRec[id] = {state:'saving', blob:blob, blobUrl:blobUrl, mimeType:mimeType};
+    hardRender();
+    try{
+      var b64 = await blobToBase64(blob);
+      var mediaId = await saveMedia('audio', id, b64, mimeType);
+      var o = ocs.find(function(x){return x.id===id;});
+      await addLogEntry(o, {type:'audio', mediaId:mediaId, mime:mimeType});
+      try{ URL.revokeObjectURL(blobUrl); }catch(e){}
+      delete voiceRec[id];
+      hardRender();
+    }catch(e){
+      voiceRec[id] = {state:'preview', blob:blob, blobUrl:blobUrl, mimeType:mimeType, error:'Error al guardar la nota de voz. Probá de nuevo.'};
+      hardRender();
+    }
+  }
+
+  async function playAudioNote(wrap, btn){
+    var mediaId = wrap.getAttribute('data-audio-media-id');
+    if(!mediaId){ btn.textContent='Nota no disponible.'; return; }
+    btn.disabled = true; btn.textContent='Cargando...';
+    try{
+      var d = await getMedia(mediaId);
+      var blob = base64ToBlob(d.data, d.mime||'audio/webm');
+      var objUrl = URL.createObjectURL(blob);
+      wrap.innerHTML = '<audio controls autoplay src="'+objUrl+'"></audio>';
+    }catch(e){
+      btn.disabled = false; btn.textContent='Error al cargar. Tocá para reintentar';
+    }
+  }
+
+  function renderOcForm(){
+    var editing = ocs.find(function(o){return o.id===editingOcId;});
+    var isItem = editing ? (editing.tipo==='item') : (ocFormMode==='item');
+    var title = editing ? (isItem?'Editar ítem':'Editar OC') : (isItem?'Agregar ítem (sin OC)':'Agregar OC');
+    if(canWrite===false){
+      return '<div class="empty">Solo lectura: no puedes agregar OCs en esta vista.</div>';
+    }
+    if(!stores.length){
+      return '<div class="empty">Agrega primero al menos una tienda para poder registrar OCs.</div>';
+    }
+    var storeOptions = stores.map(function(s){
+      var sel = editing && editing.storeId===s.id ? ' selected' : '';
+      return '<option value="'+s.id+'"'+sel+'>'+esc(s.nombre)+'</option>';
+    }).join('');
+    var crit = editing? editing.criticidad : 'media';
+    var modeToggle = !editing ? (
+      '<div class="segmented" style="margin-bottom:12px;">'+
+        '<button type="button" data-act="oc-form-mode" data-mode="oc" class="'+(!isItem?'active':'')+'">Orden de compra</button>'+
+        '<button type="button" data-act="oc-form-mode" data-mode="item" class="'+(isItem?'active':'')+'">Ítem suelto (sin OC)</button>'+
+      '</div>'
+    ) : '';
+    var pdfField = isItem ? '' : (
+      '<div class="field"><label>PDF de la OC'+(editing && editing.pdfMediaId?' (ya tiene uno adjunto — elegí otro para reemplazarlo)':'')+'</label><input type="file" id="of_pdf" accept="application/pdf"><div class="hint">Opcional, hasta ~700 KB — se guarda para poder verlo después. Completá los campos de abajo a mano.</div></div>'
+    );
+    var numeroField = isItem ?
+      '<div class="field"><label>Referencia (opcional)</label><input id="of_numero" value="'+esc(editing?editing.numero:'')+'" placeholder="Ej. pedido interno, repuesto..."></div>' :
+      '<div class="field"><label>Número de OC</label><input id="of_numero" required value="'+esc(editing?editing.numero:'')+'" placeholder="OC-0255"></div>';
+    return '<form class="editform" id="ocForm" data-mode="'+(isItem?'item':'oc')+'" style="margin-top:14px;">'+
+      '<h3>'+title+'</h3>'+
+      modeToggle+
+      pdfField+
+      '<div class="field-row">'+
+        numeroField+
+        '<div class="field"><label>Proyecto</label><input id="of_proyecto" value="'+esc(editing?editing.proyecto:'')+'" placeholder="509-037 · TAC DEI"></div>'+
+      '</div>'+
+      '<div class="field"><label>Tienda / dónde se recoge</label><select id="of_store">'+storeOptions+'</select></div>'+
+      '<div class="field"><label>'+(isItem?'Qué se recoge (descripción)':'Materiales (resumen)')+'</label><input id="of_desc" '+(isItem?'required':'')+' value="'+esc(editing?editing.descripcion:'')+'" placeholder="'+(isItem?'Ej. Repuesto retirado en el taller':'Ej. Ductería — ducto flexible 16&quot;')+'"></div>'+
+      '<div class="field-row">'+
+        '<div class="field"><label>Criticidad de entrega</label><select id="of_crit">'+
+          '<option value="alta"'+(crit==='alta'?' selected':'')+'>Alta</option>'+
+          '<option value="media"'+(crit==='media'?' selected':'')+'>Media</option>'+
+          '<option value="baja"'+(crit==='baja'?' selected':'')+'>Baja</option>'+
+        '</select></div>'+
+        '<div class="field"><label>Fecha entrega pactada</label><input type="date" id="of_fecha" value="'+esc(editing?editing.fechaPactada:'')+'"></div>'+
+      '</div>'+
+      '<div class="field"><label>Condición / nota de retiro en tienda</label><input id="of_cond" value="'+esc(editing?editing.condicionEntrega:'')+'" placeholder="Ej. Retirar martes 22 de setiembre"></div>'+
+      '<div class="field"><label>Dirección de entrega (destino)</label><input id="of_destino" value="'+esc(editing?editing.destino:'')+'" placeholder="Ej. Hospital San Vicente de Paul, portón..."></div>'+
+      '<div class="field-row">'+
+        '<div class="field"><label>Quién recibe</label><input id="of_recNombre" value="'+esc(editing?editing.receptorNombre:'')+'" placeholder="Nombre"></div>'+
+        '<div class="field"><label>Teléfono de quien recibe</label><input id="of_recTel" value="'+esc(editing?editing.receptorTelefono:'')+'" placeholder="+506 ..."></div>'+
+      '</div>'+
+      '<div class="form-actions">'+
+        '<button type="submit" class="btn btn-primary">'+(editing?'Guardar cambios':(isItem?'Agregar ítem':'Agregar OC'))+'</button>'+
+        (editing? '<button type="button" class="btn btn-ghost" id="ocCancel">Cancelar</button>' : '')+
+      '</div>'+
+      '<div id="ocFormMsg" class="form-msg"></div>'+
+    '</form>';
+  }
+
+  // ================= RUTA (DRIVER) VIEW =================
+  function renderRutaHtml(){
+    var activeStoreIds = {};
+    ocs.forEach(function(o){ if(o.estado!=='entregado') activeStoreIds[o.storeId]=true; });
+    var routeStores = stores.filter(function(s){ return activeStoreIds[s.id] || !ocs.some(function(o){return o.storeId===s.id;}); });
+    if(!routeStores.length) routeStores = stores.slice();
+
+    var pend = ocs.filter(function(o){return o.estado==='pendiente';}).length;
+    var recogidas = ocs.filter(function(o){return o.estado==='recogido';}).length;
+    var entregadas = ocs.filter(function(o){return o.estado==='entregado';}).length;
+    var crit = ocs.filter(function(o){return o.criticidad==='alta' && o.estado!=='entregado';}).length;
+
+    var html = '<div class="stat-row">'+
+      '<div class="stat-tile"><div class="n mono">'+pend+'</div><div class="l">Por recoger</div></div>'+
+      '<div class="stat-tile"><div class="n mono">'+recogidas+'</div><div class="l">Recogidas</div></div>'+
+      '<div class="stat-tile"><div class="n mono">'+entregadas+'</div><div class="l">Entregadas</div></div>'+
+      '<div class="stat-tile'+(crit?' alerta':'')+'"><div class="n mono">'+crit+'</div><div class="l">Críticas</div></div>'+
+    '</div>';
+    html += '<div class="actions-row" style="margin:-8px 0 14px;"><button class="btn btn-ghost btn-sm" type="button" data-act="reload-data">🔄 Actualizar datos</button></div>';
+
+    if(puntoInicio){
+      var piMapsUrl = storeMapsUrl(puntoInicio);
+      html += '<div class="stop" style="border-left:4px solid var(--accent);">'+
+        '<div class="stop-head">'+
+          '<div class="stop-num">🚩</div>'+
+          '<div><div class="stop-name">Salida: '+esc(puntoInicio.nombre||'Punto de salida')+'</div><div class="stop-addr">'+esc(puntoInicio.direccionCorta||'')+'</div></div>'+
+        '</div>'+
+        (piMapsUrl? '<a class="btn btn-outline btn-sm" target="_blank" rel="noopener" href="'+piMapsUrl+'">Abrir en Maps ↗</a>' : '')+
+      '</div>';
+    }
+
+    if(!routeStores.length){
+      html += '<div class="empty">No hay paradas todavía. Agrega tiendas y OCs desde "Planificación".</div>';
+      return html;
+    }
+
+    if(canWrite!==false && !collectorMode && puntoInicio && puntoInicio.lat!=null){
+      html += '<div class="actions-row" style="margin:10px 0;"><button class="btn btn-outline btn-sm" type="button" data-act="recalc-orden">📍 Recalcular orden por cercanía a la salida</button></div>';
+    }
+
+    routeStores.forEach(function(s, idx){
+      var stopOcs = ocs.filter(function(o){return o.storeId===s.id;});
+      var mapsUrl = storeMapsUrl(s);
+      var hasCrit = stopOcs.some(function(o){return o.criticidad==='alta' && o.estado!=='entregado';});
+      html += '<div class="stop" data-store-id="'+s.id+'">'+
+        '<div class="stop-head">'+
+          '<div class="stop-num">'+(idx+1)+'</div>'+
+          '<div><div class="stop-name">'+esc(s.nombre)+(hasCrit?' <span class="chip chip-alta">Urgente</span>':'')+'</div><div class="stop-addr">'+esc(s.direccionCorta||'')+'</div></div>'+
+          (canWrite!==false && !collectorMode? (
+            '<div class="stop-reorder">'+
+              '<button class="icon-btn" data-act="store-up" data-id="'+s.id+'" title="Subir">↑</button>'+
+              '<button class="icon-btn" data-act="store-down" data-id="'+s.id+'" title="Bajar">↓</button>'+
+            '</div>'
+          ):'') +
+        '</div>'+
+        (mapsUrl? '<a class="btn btn-outline btn-sm" target="_blank" rel="noopener" href="'+mapsUrl+'">Abrir esta parada en Maps ↗</a>' : '') +
+        (stopOcs.length? stopOcs.map(function(o){return '<div class="oc-item">'+renderOcCard(o,false,collectorMode)+'</div>';}).join('') : '<div class="hint" style="margin-top:8px;">Sin OCs asignadas a esta tienda.</div>')+
+      '</div>';
+    });
+
+    var routeUrl = fullRouteUrl(routeStores);
+    var originExplicit = (puntoInicio && puntoInicio.lat!=null) ? storeDestParam(puntoInicio) : null;
+    var routeUrlFromPunto = (routeUrl && originExplicit) ? fullRouteUrl(routeStores, originExplicit) : null;
+    if(routeUrl){
+      html += '<div class="route-cta">'+
+        '<a class="btn btn-primary btn-block" target="_blank" rel="noopener" href="'+routeUrl+'">🧭 Abrir ruta completa (tu ubicación actual)</a>'+
+        (routeUrlFromPunto? '<a class="btn btn-outline btn-block" style="margin-top:8px;" target="_blank" rel="noopener" href="'+routeUrlFromPunto+'">🧭 Abrir ruta completa (desde '+esc(puntoInicio.nombre||'la salida')+')</a>' : '')+
+      '</div>';
+    }
+    return html;
+  }
+
+
+  // ---------- wiring ----------
+  function wireCommon(root){
+    var seg = document.getElementById('segmented');
+    var orgTag = document.getElementById('orgTag');
+    $all('[data-act="reload-data"]', root).forEach(function(b){
+      b.onclick = function(){
+        if(!db){ b.disabled=true; b.textContent='Conectando...'; boot().then(function(){ hardRender(); }); return; }
+        b.disabled = true; var prev = b.textContent; b.textContent='Actualizando...';
+        reloadDataOnce().then(function(){
+          hardRender();
+        }).catch(function(e){
+          console.warn('reloadDataOnce failed', e);
+          b.disabled = false; b.textContent = prev;
+          alertLikeBanner('No se pudo actualizar. Probá de nuevo en un momento.');
+        });
+      };
+    });
+    if(collectorMode){
+      if(seg) seg.hidden = true;
+      if(orgTag) orgTag.textContent = 'Modo recolector · marcá tus recolecciones y entregas';
+      return;
+    }
+    $all('button[data-view]', document).forEach(function(b){
+      b.onclick = function(){ view=b.getAttribute('data-view'); try{localStorage.setItem('ra_view',view);}catch(e){} hardRender(); };
+    });
+  }
+
+  function describeError(e){
+    if(e && e.message==='sin_db') return 'No hay conexión con la base de datos. Revisá tu internet y recargá la página.';
+    if(e && e.code==='invalid_argument') return 'No se pudo guardar: revisá que los campos obligatorios estén completos.';
+    if(e && e.code) return 'No se pudo guardar (' + e.code + '). Probá de nuevo en un momento.';
+    return 'No se pudo guardar. Probá de nuevo.';
+  }
+
+  function wireAdmin(root){
+    $all('[data-act="copy-driver-link"]', root).forEach(function(b){
+      b.onclick = function(){
+        var link = driverLink();
+        var msg = $('#driverLinkMsg', root);
+        function ok(){ if(msg){ msg.className='form-msg ok'; msg.textContent='¡Copiado! Ya lo podés pegar en WhatsApp o donde prefieras.'; } }
+        function fail(){
+          var inp = $('#driverLinkInput', root);
+          if(inp){ inp.select(); inp.setSelectionRange(0,99999); }
+          if(msg){ msg.className='form-msg err'; msg.textContent='No se pudo copiar automático — el texto ya está seleccionado, usá Ctrl/Cmd+C.'; }
+        }
+        if(navigator.clipboard && navigator.clipboard.writeText){
+          navigator.clipboard.writeText(link).then(ok, fail);
+        } else {
+          try{
+            var inp = $('#driverLinkInput', root);
+            inp.select(); inp.setSelectionRange(0,99999);
+            if(document.execCommand('copy')) ok(); else fail();
+          }catch(e){ fail(); }
+        }
+      };
+    });
+    var sf = $('#storeForm', root);
+    if(sf){
+      sf.onsubmit = async function(ev){
+        ev.preventDefault();
+        var msg = $('#storeFormMsg', root);
+        if(msg){ msg.className='form-msg'; msg.textContent=''; }
+        var coords = parseCoords($('#sf_coords',root).value);
+        var data = {
+          nombre: $('#sf_nombre',root).value.trim(),
+          direccionCorta: $('#sf_dir',root).value.trim(),
+          lat: coords? coords.lat: null,
+          lng: coords? coords.lng: null,
+          notas: $('#sf_notas',root).value.trim()
+        };
+        if(!data.nombre || !data.direccionCorta){
+          if(msg){ msg.className='form-msg err'; msg.textContent='Completá al menos el nombre y la dirección corta.'; }
+          return;
+        }
+        var submitBtn = sf.querySelector('button[type="submit"]');
+        if(submitBtn) submitBtn.disabled = true;
+        try{
+          await saveStore(data);
+        }catch(e){
+          console.warn('saveStore failed', e);
+          if(submitBtn) submitBtn.disabled = false;
+          if(msg){ msg.className='form-msg err'; msg.textContent=describeError(e); }
+          return;
+        }
+        // el guardado en la base de datos ya se confirmó en este punto;
+        // un problema al redibujar la pantalla no debe leerse como que no se guardó.
+        editingStoreId=null;
+        try{ hardRender(); }catch(e2){ console.warn('render after saveStore failed', e2); }
+        var okMsg = document.getElementById('storeFormMsg');
+        if(okMsg){ okMsg.className='form-msg ok'; okMsg.textContent='Tienda agregada ✓'; }
+      };
+      var cancel = $('#storeCancel', root);
+      if(cancel) cancel.onclick=function(){ editingStoreId=null; hardRender(); };
+    }
+    var pf = $('#puntoInicioForm', root);
+    if(pf){
+      pf.onsubmit = async function(ev){
+        ev.preventDefault();
+        var msg = $('#puntoInicioFormMsg', root);
+        if(msg){ msg.className='form-msg'; msg.textContent=''; }
+        var coords = parseCoords($('#pi_coords',root).value);
+        var data = {
+          nombre: $('#pi_nombre',root).value.trim(),
+          direccionCorta: $('#pi_dir',root).value.trim(),
+          lat: coords? coords.lat: null,
+          lng: coords? coords.lng: null
+        };
+        if(!data.nombre || !data.direccionCorta){
+          if(msg){ msg.className='form-msg err'; msg.textContent='Completá al menos el nombre y la dirección corta.'; }
+          return;
+        }
+        if(!coords){
+          if(msg){ msg.className='form-msg err'; msg.textContent='Necesito coordenadas válidas (o un link de Maps) para poder calcular distancias y usarlo como origen en Maps.'; }
+          return;
+        }
+        var submitBtn = pf.querySelector('button[type="submit"]');
+        if(submitBtn) submitBtn.disabled = true;
+        try{
+          await savePuntoInicio(data);
+        }catch(e){
+          console.warn('savePuntoInicio failed', e);
+          if(submitBtn) submitBtn.disabled = false;
+          if(msg){ msg.className='form-msg err'; msg.textContent=describeError(e); }
+          return;
+        }
+        editingPuntoInicio=false;
+        try{ hardRender(); }catch(e2){ console.warn('render after savePuntoInicio failed', e2); }
+        var okMsg = document.getElementById('puntoInicioFormMsg');
+        if(okMsg){ okMsg.className='form-msg ok'; okMsg.textContent='Punto de salida guardado ✓'; }
+      };
+      var piCancel = $('#puntoInicioCancel', root);
+      if(piCancel) piCancel.onclick=function(){ editingPuntoInicio=false; hardRender(); };
+    }
+    $all('[data-act="edit-punto-inicio"]', root).forEach(function(b){
+      b.onclick=function(){ editingPuntoInicio=true; hardRender(); };
+    });
+    $all('[data-act="oc-form-mode"]', root).forEach(function(b){
+      b.onclick=function(){ ocFormMode = b.getAttribute('data-mode')==='item' ? 'item' : 'oc'; hardRender(); };
+    });
+    var of = $('#ocForm', root);
+    if(of){
+      var formMode = of.getAttribute('data-mode')==='item' ? 'item' : 'oc';
+      of.onsubmit = async function(ev){
+        ev.preventDefault();
+        var msg = $('#ocFormMsg', root);
+        if(msg){ msg.className='form-msg'; msg.textContent=''; }
+        var data = {
+          tipo: formMode,
+          numero: $('#of_numero',root).value.trim(),
+          proyecto: $('#of_proyecto',root).value.trim(),
+          storeId: $('#of_store',root).value,
+          descripcion: $('#of_desc',root).value.trim(),
+          criticidad: $('#of_crit',root).value,
+          fechaPactada: $('#of_fecha',root).value,
+          condicionEntrega: $('#of_cond',root).value.trim(),
+          destino: $('#of_destino',root).value.trim(),
+          receptorNombre: $('#of_recNombre',root).value.trim(),
+          receptorTelefono: $('#of_recTel',root).value.trim()
+        };
+        if(formMode==='item'){
+          if(!data.descripcion || !data.storeId){
+            if(msg){ msg.className='form-msg err'; msg.textContent='Completá al menos la descripción del ítem y la tienda/punto de recolección.'; }
+            return;
+          }
+        } else if(!data.numero || !data.storeId){
+          if(msg){ msg.className='form-msg err'; msg.textContent='Completá al menos el número de OC y la tienda.'; }
+          return;
+        }
+        var submitBtn = of.querySelector('button[type="submit"]');
+        if(submitBtn) submitBtn.disabled = true;
+        var pdfInput = $('#of_pdf',root);
+        var pdfFile = pdfInput && pdfInput.files && pdfInput.files[0];
+        var newId;
+        try{
+          newId = await saveOc(data);
+        }catch(e){
+          console.warn('saveOc failed', e);
+          if(submitBtn) submitBtn.disabled = false;
+          if(msg){ msg.className='form-msg err'; msg.textContent=describeError(e); }
+          return;
+        }
+        // la OC ya quedó guardada; lo que sigue (PDF, redibujo) no cambia eso.
+        if(pdfFile && newId && pdfFile.type==='application/pdf' && db){
+          if(pdfFile.size > MAX_MEDIA_BYTES){
+            alertLikeBanner('La OC se guardó, pero el PDF pesa demasiado (más de 700 KB) y no se pudo adjuntar. Probá comprimirlo o adjuntarlo desde la tarjeta con un archivo más liviano.');
+          } else {
+            try{
+              var pdfB64 = await blobToBase64(pdfFile);
+              var pdfMediaId = await saveMedia('pdf', newId, pdfB64, 'application/pdf');
+              await db.collection('ocs').doc(newId).update({pdfMediaId:pdfMediaId, pdfUploadedAt:new Date().toISOString()});
+            }catch(e2){ console.warn('pdf upload after saveOc failed', e2); /* la OC ya se guardó; el PDF se puede adjuntar luego desde la tarjeta */ }
+          }
+        }
+        editingOcId=null;
+        ocFormMode='oc';
+        try{ hardRender(); }catch(e3){ console.warn('render after saveOc failed', e3); }
+        var okMsg = document.getElementById('ocFormMsg');
+        if(okMsg){ okMsg.className='form-msg ok'; okMsg.textContent=(formMode==='item'?'Ítem agregado ✓':'OC agregada ✓'); }
+      };
+      var cancel2 = $('#ocCancel', root);
+      if(cancel2) cancel2.onclick=function(){ editingOcId=null; ocFormMode='oc'; hardRender(); };
+    }
+    bindCardActions(root);
+  }
+
+  function wireRuta(root){
+    bindCardActions(root);
+  }
+
+  function bindCardActions(root){
+    $all('[data-act="edit-store"]', root).forEach(function(b){
+      b.onclick=function(){ editingStoreId=b.getAttribute('data-id'); view='admin'; hardRender(); $('#storeForm') && $('#storeForm').scrollIntoView({behavior:'smooth', block:'center'}); };
+    });
+    $all('[data-act="del-store"]', root).forEach(function(b){
+      b.onclick=function(){
+        var id=b.getAttribute('data-id');
+        var key='store-'+id;
+        if(confirming[key]==='confirm'){ delete confirming[key]; deleteStore(id).catch(function(e){ console.warn('deleteStore failed', e); }); }
+        else if(confirming[key]!=='deny'){ flashConfirm(key,false); }
+      };
+    });
+    $all('[data-act="store-up"]', root).forEach(function(b){ b.onclick=function(){ swapStoreOrder(b.getAttribute('data-id'), -1).catch(function(e){ console.warn('reorder failed', e); }); }; });
+    $all('[data-act="store-down"]', root).forEach(function(b){ b.onclick=function(){ swapStoreOrder(b.getAttribute('data-id'), 1).catch(function(e){ console.warn('reorder failed', e); }); }; });
+    $all('[data-act="recalc-orden"]', root).forEach(function(b){
+      b.onclick=function(){
+        b.disabled = true;
+        var prevText = b.textContent;
+        b.textContent = 'Calculando...';
+        recalcularOrdenPorCercania().then(function(){
+          hardRender();
+        }).catch(function(e){
+          console.warn('recalcularOrdenPorCercania failed', e);
+          b.disabled = false;
+          b.textContent = prevText;
+          alertLikeBanner('No se pudo recalcular el orden: '+(e&&e.message==='sin_punto_inicio'?'configurá primero el punto de salida con coordenadas.':describeError(e)));
+        });
+      };
+    });
+
+    $all('[data-act="edit-oc"]', root).forEach(function(b){
+      b.onclick=function(){ editingOcId=b.getAttribute('data-id'); view='admin'; hardRender(); $('#ocForm') && $('#ocForm').scrollIntoView({behavior:'smooth', block:'center'}); };
+    });
+    $all('[data-act="del-oc"]', root).forEach(function(b){
+      b.onclick=function(){
+        var id=b.getAttribute('data-id');
+        var key='oc-'+id;
+        if(confirming[key]==='confirm'){ delete confirming[key]; deleteOc(id).catch(function(e){ console.warn('deleteOc failed', e); }); }
+        else { flashConfirm(key,false); }
+      };
+    });
+    $all('[data-act="oc-recogido"]', root).forEach(function(b){
+      b.onclick=function(){ var o=ocs.find(function(x){return x.id===b.getAttribute('data-id');}); if(o) advanceEstado(o,'recogido').catch(function(e){ console.warn('advanceEstado failed', e); }); };
+    });
+    $all('[data-act="oc-entregado"]', root).forEach(function(b){
+      b.onclick=function(){ var o=ocs.find(function(x){return x.id===b.getAttribute('data-id');}); if(o) advanceEstado(o,'entregado').catch(function(e){ console.warn('advanceEstado failed', e); }); };
+    });
+    $all('[data-act="toggle-notes"]', root).forEach(function(b){
+      b.onclick=function(){ var id=b.getAttribute('data-id'); expandedNotes[id]=!expandedNotes[id]; hardRender(); };
+    });
+    $all('[data-act="toggle-trip"]', root).forEach(function(b){
+      b.onclick=function(){ var id=b.getAttribute('data-id'); expandedTrips[id]=!expandedTrips[id]; hardRender(); };
+    });
+    $all('[data-act="close-trip"]', root).forEach(function(b){
+      b.onclick=function(){ confirming['close-trip']='confirm'; hardRender(); };
+    });
+    $all('[data-act="cancel-close-trip"]', root).forEach(function(b){
+      b.onclick=function(){ delete confirming['close-trip']; hardRender(); };
+    });
+    $all('[data-act="confirm-close-trip"]', root).forEach(function(b){
+      b.onclick=function(){
+        delete confirming['close-trip'];
+        b.disabled = true;
+        b.textContent = 'Archivando...';
+        closeTrip().then(function(){
+          hardRender();
+        }).catch(function(e){
+          console.warn('closeTrip failed', e);
+          hardRender();
+          alertLikeBanner('No se pudo cerrar el viaje del todo: '+(e&&e.message?e.message:'error desconocido')+'. Revisá el historial y la lista de OCs.');
+        });
+      };
+    });
+    $all('[data-act="add-note"]', root).forEach(function(b){
+      b.onclick=function(){
+        var id=b.getAttribute('data-id');
+        var ta = document.getElementById('note_txt_'+id);
+        if(!ta || !ta.value.trim()) return;
+        var o = ocs.find(function(x){return x.id===id;});
+        var text = ta.value.trim();
+        ta.value='';
+        addLogEntry(o, {type:'text', text:text}).catch(function(e){ console.warn('addLogEntry failed', e); });
+      };
+    });
+    $all('[data-act="view-pdf"]', root).forEach(function(b){
+      b.onclick=function(){ viewPdf(b.getAttribute('data-media-id'), b); };
+    });
+    $all('[data-act="pdf-input"]', root).forEach(function(inp){
+      inp.onchange = async function(){
+        var id = inp.getAttribute('data-id');
+        var file = inp.files && inp.files[0];
+        var status = document.getElementById('pdf_status_'+id);
+        if(!file) return;
+        if(file.type !== 'application/pdf'){
+          if(status) status.textContent='Ese archivo no es un PDF.';
+          return;
+        }
+        if(!db){ if(status) status.textContent='No se pudo guardar (sin conexión).'; return; }
+        if(file.size > MAX_MEDIA_BYTES){
+          if(status) status.textContent='El PDF pesa demasiado (más de 700 KB). Probá comprimirlo.';
+          return;
+        }
+        if(status) status.textContent='Guardando PDF...';
+        try{
+          var pdfB64 = await blobToBase64(file);
+          var pdfMediaId = await saveMedia('pdf', id, pdfB64, 'application/pdf');
+          await db.collection('ocs').doc(id).update({pdfMediaId:pdfMediaId, pdfUploadedAt:new Date().toISOString()});
+          if(status) status.textContent='PDF adjuntado.';
+        }catch(e){
+          if(status) status.textContent='Error al guardar el PDF.';
+        }
+      };
+    });
+    $all('[data-act="voice-start"]', root).forEach(function(b){
+      b.onclick=function(){ voiceStart(b.getAttribute('data-id')); };
+    });
+    $all('[data-act="voice-stop"]', root).forEach(function(b){
+      b.onclick=function(){ voiceStop(b.getAttribute('data-id')); };
+    });
+    $all('[data-act="voice-cancel"]', root).forEach(function(b){
+      b.onclick=function(){ voiceCancel(b.getAttribute('data-id')); };
+    });
+    $all('[data-act="voice-save"]', root).forEach(function(b){
+      b.onclick=function(){ voiceSave(b.getAttribute('data-id')); };
+    });
+    $all('[data-act="voice-discard"]', root).forEach(function(b){
+      b.onclick=function(){ voiceDiscard(b.getAttribute('data-id')); };
+    });
+    $all('[data-act="play-audio-note"]', root).forEach(function(b){
+      b.onclick=function(){ playAudioNote(b.closest('.audio-note'), b); };
+    });
+  }
+
+  async function resolveNames(root){
+    // Sin cuentas no hay perfiles que resolver — el nombre ya se guarda
+    // directo en cada nota (ver getMyNombre/setMyNombre y el uso de myId
+    // en advanceEstado/addLogEntry/closeTrip). Se deja esta función como
+    // no-op para no tener que tocar la llamada existente en rebuild().
+  }
+
+  // ---------- identidad sin cuenta: nombre guardado en este dispositivo ----------
+  function renderNombreBar(){
+    var el = document.getElementById('nombreBar');
+    if(!el) return;
+    if(editingNombre){
+      el.innerHTML = '<form id="nombreForm" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">'+
+        '<input id="nombreInput" placeholder="Tu nombre" value="'+esc(myNombre||'')+'" style="flex:1; min-width:160px; max-width:240px;">'+
+        '<button type="submit" class="btn btn-primary btn-sm">Guardar</button>'+
+        (myNombre?'<button type="button" class="btn btn-ghost btn-sm" id="nombreCancel">Cancelar</button>':'')+
+      '</form>';
+      var f = document.getElementById('nombreForm');
+      f.onsubmit = function(ev){
+        ev.preventDefault();
+        var v = document.getElementById('nombreInput').value.trim();
+        if(!v) return;
+        setMyNombre(v);
+        myId = myNombre;
+        editingNombre = false;
+        renderNombreBar();
+      };
+      var c = document.getElementById('nombreCancel');
+      if(c) c.onclick = function(){ editingNombre=false; renderNombreBar(); };
+    } else {
+      el.innerHTML = myNombre ?
+        ('Estás como <b>'+esc(myNombre)+'</b> · <button type="button" class="notes-toggle" id="nombreEdit" style="padding:0;">cambiar</button>') :
+        ('<button type="button" class="notes-toggle" id="nombreEdit" style="padding:0;">📝 Poné tu nombre (aparece en tus notas)</button>');
+      var e2 = document.getElementById('nombreEdit');
+      if(e2) e2.onclick = function(){ editingNombre=true; renderNombreBar(); };
+    }
+  }
+
+  // ---------- init ----------
+  hardRender();
+  renderNombreBar();
+  boot().then(function(){ hardRender(); renderNombreBar(); return seedIfEmpty(); });
+})();
+</script>
+</body>
+</html>
