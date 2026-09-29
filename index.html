@@ -272,11 +272,29 @@
   var myNombre=null;
   var editingNombre=false;
   var stores=[]; // {id,nombre,direccionCorta,lat,lng,notas,orden,example} — se reutilizan entre viajes, nunca se borran al cerrar un viaje
-  var ocs=[];    // {id,numero,proyecto,storeId,descripcion,criticidad,destino,receptorNombre,receptorTelefono,fechaPactada,condicionEntrega,estado,fechaRecogida,fechaEntregada,recogidoPorId,entregadoPorId,log,example}
+  var destinos=[]; // {id,nombre,direccionCorta,lat,lng,notas,orden,createdAt} — lugares de entrega, se guardan igual que las tiendas y se reutilizan entre viajes
+  var ocs=[];    // {id,numero,proyecto,storeId,descripcion,criticidad,destino,destinoId,destinoLat,destinoLng,receptorNombre,receptorTelefono,fechaPactada,condicionEntrega,estado,fechaRecogida,fechaEntregada,recogidoPorId,entregadoPorId,log,example}
   var viajes=[]; // {id,cerradoAt,cerradoPorId,ocs:[...snapshot],resumen:{total,entregadas,recogidas,pendientes}} — historial de viajes cerrados
   var puntoInicio=null; // {nombre,direccionCorta,lat,lng} — punto fijo de salida del conductor (bodega/oficina), configurado una sola vez
-  var view = collectorMode ? 'ruta' : ((window.matchMedia && window.matchMedia('(max-width: 640px)').matches) ? 'ruta' : 'admin');
+  // Datos que llegan por enlace desde el artefacto de Claude (extracción de PDF de OC):
+  // ?prefill=<json> — se leen una sola vez al cargar y se usan para precompletar
+  // el formulario de "Agregar OC" (ver renderOcForm / of.onsubmit).
+  var prefillData = null;
+  (function(){
+    try{
+      var params = new URLSearchParams(location.search);
+      var raw = params.get('prefill');
+      if(raw){
+        prefillData = JSON.parse(raw);
+        var url = new URL(location.href);
+        url.searchParams.delete('prefill');
+        history.replaceState(null, '', url.pathname + (url.search||'') + (location.hash||''));
+      }
+    }catch(e){ console.warn('no se pudo leer ?prefill=', e); prefillData = null; }
+  })();
+  var view = prefillData ? 'admin' : (collectorMode ? 'ruta' : ((window.matchMedia && window.matchMedia('(max-width: 640px)').matches) ? 'ruta' : 'admin'));
   var editingStoreId=null; // null = add mode
+  var editingDestinoId=null; // null = add mode
   var editingOcId=null;
   var ocFormMode='oc'; // 'oc' | 'item' — modo del formulario "Agregar OC/ítem" cuando no se está editando uno existente
   var editingPuntoInicio=false;
@@ -315,6 +333,24 @@
   function textDestMapsUrl(addr){
     if(!addr) return null;
     return 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(addr)+'&travelmode=driving';
+  }
+  // Empareja un texto libre (extraído de un PDF o guardado antes de que
+  // existiera el picklist) contra una lista {id,nombre,...} — primero por
+  // igualdad exacta (sin mayúsculas/acentos de más) y si no por contención,
+  // para no perder coincidencias como "Global Supply" vs "Global Supply (Heredia)".
+  function normText(s){
+    return String(s||'').trim().toLowerCase();
+  }
+  function matchByName(list, text){
+    var t = normText(text);
+    if(!t) return null;
+    var exact = list.find(function(x){ return normText(x.nombre)===t; });
+    if(exact) return exact;
+    var contains = list.find(function(x){
+      var n = normText(x.nombre);
+      return n && (t.indexOf(n)!==-1 || n.indexOf(t)!==-1);
+    });
+    return contains || null;
   }
   function fullRouteUrl(orderedStores, origin){
     if(!orderedStores.length) return null;
@@ -388,6 +424,11 @@
         stores.sort(function(a,b){ return (a.orden||0)-(b.orden||0); });
         render();
       }, function(err){ console.warn('stores snapshot error', err); dbBroken=true; updateBanners(); });
+      db.collection('destinos').onSnapshot(function(snap){
+        destinos = snap.docs.map(function(d){ var raw=d.data()||{}; var o={}; for(var k in raw){ o[k]=raw[k]; } o.id=d.id; return o; });
+        destinos.sort(function(a,b){ return (a.orden||0)-(b.orden||0); });
+        render();
+      }, function(err){ console.warn('destinos snapshot error', err); });
       db.collection('ocs').onSnapshot(function(snap){
         ocs = snap.docs.map(function(d){ var raw=d.data()||{}; var o={}; for(var k in raw){ o[k]=raw[k]; } o.id=d.id; if(!Array.isArray(o.log)) o.log=[]; return o; });
         render();
@@ -432,6 +473,11 @@
       var storesSnap = await db.collection('stores').get();
       stores = storesSnap.docs.map(function(d){ var raw=d.data()||{}; var o={}; for(var k in raw){ o[k]=raw[k]; } o.id=d.id; return o; });
       stores.sort(function(a,b){ return (a.orden||0)-(b.orden||0); });
+    }catch(e){ ok=false; captureReloadErr(e); }
+    try{
+      var destinosSnap = await db.collection('destinos').get();
+      destinos = destinosSnap.docs.map(function(d){ var raw=d.data()||{}; var o={}; for(var k in raw){ o[k]=raw[k]; } o.id=d.id; return o; });
+      destinos.sort(function(a,b){ return (a.orden||0)-(b.orden||0); });
     }catch(e){ ok=false; captureReloadErr(e); }
     try{
       var ocsSnap = await db.collection('ocs').get();
@@ -508,6 +554,31 @@
       db.collection('stores').doc(a.id).update({orden:bo}),
       db.collection('stores').doc(b.id).update({orden:ao})
     ]);
+  }
+
+  // ---------- CRUD: destinos (lugares de entrega) ----------
+  async function saveDestino(data){
+    if(!db) throw new Error('sin_db');
+    if(editingDestinoId){
+      await db.collection('destinos').doc(editingDestinoId).update(data);
+      var existing = destinos.find(function(d){return d.id===editingDestinoId;});
+      if(existing){ for(var k in data){ existing[k]=data[k]; } }
+      return editingDestinoId;
+    } else {
+      var maxOrden = destinos.reduce(function(m,d){return Math.max(m, d.orden||0);},0);
+      data.orden = maxOrden+10;
+      data.createdAt = new Date().toISOString();
+      var ref = await db.collection('destinos').add(data);
+      var localCopy = {}; for(var k2 in data){ localCopy[k2]=data[k2]; } localCopy.id = ref.id;
+      destinos.push(localCopy);
+      destinos.sort(function(a,b){ return (a.orden||0)-(b.orden||0); });
+      return ref.id;
+    }
+  }
+  async function deleteDestino(id){
+    var used = ocs.some(function(o){ return o.destinoId===id; });
+    if(used){ flashConfirm('destino-'+id, true); return; }
+    await db.collection('destinos').doc(id).delete();
   }
 
   // ---------- punto de inicio (salida fija del chofer) ----------
@@ -729,6 +800,13 @@
     html += renderStoreForm();
     html += '</section>';
 
+    // destinos section
+    html += '<section class="block"><div class="block-head"><h2>Lugares de entrega</h2><span class="count">'+destinos.length+'</span></div>';
+    html += '<div class="hint" style="margin-bottom:8px;">Se guardan una sola vez acá, igual que las tiendas, y después se seleccionan como destino al registrar una OC o un ítem suelto.</div>';
+    html += '<div id="destinosList">'+ (destinos.length? destinos.map(renderDestinoCard).join('') : '<div class="empty">Todavía no hay lugares de entrega. Agrega el primero abajo.</div>') +'</div>';
+    html += renderDestinoForm();
+    html += '</section>';
+
     // ocs section
     html += '<section class="block"><div class="block-head"><h2>Órdenes de compra (viaje actual)</h2><span class="count">'+ocs.length+'</span></div>';
     if(!ocs.length){
@@ -890,10 +968,51 @@
     '</form>';
   }
 
+  function renderDestinoCard(d){
+    var mapsUrl = storeMapsUrl(d);
+    var coordsTxt = (d.lat!=null && d.lng!=null) ? (d.lat.toFixed(5)+', '+d.lng.toFixed(5)) : 'sin coordenadas';
+    var denyMsg = confirming['destino-'+d.id]==='deny';
+    var confirmingDel = confirming['destino-'+d.id]==='confirm';
+    return '<div class="card" data-destino-id="'+d.id+'">'+
+      '<div class="row"><div>'+
+        '<div class="title-line">'+esc(d.nombre)+'</div>'+
+        '<div class="sub-line">'+esc(d.direccionCorta||'')+'</div>'+
+        '<div class="sub-line mono">'+coordsTxt+(mapsUrl?' · <a class="maplink" target="_blank" rel="noopener" href="'+mapsUrl+'">Ver en Maps ↗</a>':'')+'</div>'+
+        (d.notas? '<div class="sub-line">'+esc(d.notas)+'</div>' : '') +
+      '</div></div>'+
+      (canWrite!==false ? (
+        '<div class="actions-row">'+
+          '<button class="btn btn-ghost btn-sm" data-act="edit-destino" data-id="'+d.id+'">Editar</button>'+
+          '<button class="btn btn-danger btn-sm" data-act="del-destino" data-id="'+d.id+'">'+(denyMsg?'Tiene OCs asignadas':(confirmingDel?'¿Seguro? Toca de nuevo':'Eliminar'))+'</button>'+
+        '</div>'
+      ) : '') +
+    '</div>';
+  }
+
+  function renderDestinoForm(){
+    var editing = destinos.find(function(d){return d.id===editingDestinoId;});
+    var title = editing ? 'Editar lugar de entrega' : 'Agregar lugar de entrega';
+    if(canWrite===false){
+      return '<div class="empty">Solo lectura: no puedes agregar lugares de entrega en esta vista.</div>';
+    }
+    return '<form class="editform" id="destinoForm">'+
+      '<h3>'+title+'</h3>'+
+      '<div class="field"><label>Nombre del lugar de entrega</label><input id="df_nombre" required value="'+esc(editing?editing.nombre:'')+'" placeholder="Ej. Hospital San Vicente de Paul"></div>'+
+      '<div class="field"><label>Dirección corta</label><input id="df_dir" required value="'+esc(editing?editing.direccionCorta:'')+'" placeholder="Ej. Portón a la derecha de la salida de ambulancias, costado oeste"></div>'+
+      '<div class="field"><label>Coordenadas o enlace de Google Maps</label><input id="df_coords" value="'+(editing && editing.lat!=null? (editing.lat+', '+editing.lng):'')+'" placeholder="9.9459, -84.1084 o pega el link de Maps"></div>'+
+      '<div class="field"><label>Notas (contacto, referencia, etc.)</label><textarea id="df_notas" placeholder="Opcional">'+esc(editing?editing.notas:'')+'</textarea></div>'+
+      '<div class="form-actions">'+
+        '<button type="submit" class="btn btn-primary">'+(editing?'Guardar cambios':'Agregar lugar de entrega')+'</button>'+
+        (editing? '<button type="button" class="btn btn-ghost" id="destinoCancel">Cancelar</button>' : '')+
+      '</div>'+
+      '<div id="destinoFormMsg" class="form-msg"></div>'+
+    '</form>';
+  }
+
   function renderOcCard(o, showStore, restrict){
     var store = stores.find(function(s){return s.id===o.storeId;});
     var isOpen = !!expandedNotes[o.id];
-    var mapsDest = textDestMapsUrl(o.destino);
+    var mapsDest = (o.destinoLat!=null && o.destinoLng!=null) ? storeMapsUrl({lat:o.destinoLat, lng:o.destinoLng, direccionCorta:o.destino}) : textDestMapsUrl(o.destino);
     var confirmingDel = confirming['oc-'+o.id]==='confirm';
     var actions='';
     if(canWrite!==false){
@@ -1296,8 +1415,12 @@
     if(!stores.length){
       return '<div class="empty">Agrega primero al menos una tienda para poder registrar OCs.</div>';
     }
+    // Datos que llegan del artefacto de Claude (extracción de PDF) solo se usan
+    // una vez, al agregar (nunca al editar una OC ya existente).
+    var pf = (!editing && prefillData) ? prefillData : null;
+    var matchedStore = pf ? matchByName(stores, pf.proveedor) : null;
     var storeOptions = stores.map(function(s){
-      var sel = editing && editing.storeId===s.id ? ' selected' : '';
+      var sel = (editing && editing.storeId===s.id) || (matchedStore && matchedStore.id===s.id) ? ' selected' : '';
       return '<option value="'+s.id+'"'+sel+'>'+esc(s.nombre)+'</option>';
     }).join('');
     var crit = editing? editing.criticidad : 'media';
@@ -1311,31 +1434,53 @@
       '<div class="field"><label>PDF de la OC'+(editing && editing.pdfMediaId?' (ya tiene uno adjunto — elegí otro para reemplazarlo)':'')+'</label><input type="file" id="of_pdf" accept="application/pdf"><div class="hint">Opcional, hasta ~700 KB — se guarda para poder verlo después. Subilo primero: si el PDF tiene texto (no es una foto/escaneo), se completan solos los campos que se puedan leer. Revisalos antes de guardar.</div><div id="of_pdf_status" class="form-msg"></div></div>'
     );
     var numeroField = isItem ?
-      '<div class="field"><label>Referencia (opcional)</label><input id="of_numero" value="'+esc(editing?editing.numero:'')+'" placeholder="Ej. pedido interno, repuesto..."></div>' :
-      '<div class="field"><label>Número de OC</label><input id="of_numero" required value="'+esc(editing?editing.numero:'')+'" placeholder="OC-0255"></div>';
+      '<div class="field"><label>Referencia (opcional)</label><input id="of_numero" value="'+esc(editing?editing.numero:(pf?pf.numero:''))+'" placeholder="Ej. pedido interno, repuesto..."></div>' :
+      '<div class="field"><label>Número de OC</label><input id="of_numero" required value="'+esc(editing?editing.numero:(pf?pf.numero:''))+'" placeholder="OC-0255"></div>';
+    // ---- destino: select contra la lista de lugares de entrega guardados ----
+    var legacyDestinoText = editing ? (editing.destino||'') : (pf ? (pf.destino||'') : '');
+    var selectedDestinoId = editing ? (editing.destinoId||'') : '';
+    if(!selectedDestinoId && legacyDestinoText){
+      var matchedDestino = matchByName(destinos, legacyDestinoText);
+      if(matchedDestino) selectedDestinoId = matchedDestino.id;
+    }
+    var destinoOptions = '<option value="">— Seleccionar destino —</option>'+ destinos.map(function(d){
+      var sel = selectedDestinoId===d.id ? ' selected' : '';
+      return '<option value="'+d.id+'"'+sel+'>'+esc(d.nombre)+'</option>';
+    }).join('');
+    var destinoHint = '';
+    if(!destinos.length){
+      destinoHint = '<div class="hint">Todavía no hay lugares de entrega guardados — agregá el primero en la sección "Lugares de entrega" más arriba.</div>';
+    } else if(legacyDestinoText && !selectedDestinoId){
+      destinoHint = '<div class="hint">Texto original: "'+esc(legacyDestinoText)+'" — no coincide con ningún lugar guardado. Seleccioná el correcto de la lista, o agregalo primero en "Lugares de entrega" arriba.</div>';
+    }
+    var destinoField = '<div class="field"><label>Lugar de entrega (destino)</label><select id="of_destino">'+destinoOptions+'</select>'+destinoHint+'</div>';
+    // prefillData se limpia recién cuando se guarda o se cancela el formulario
+    // (ver of.onsubmit) — no acá, porque este render puede repetirse varias
+    // veces (streams de Firestore, hardRender tras boot()) antes de que la
+    // persona llegue a ver el formulario precompletado.
     return '<form class="editform" id="ocForm" data-mode="'+(isItem?'item':'oc')+'" style="margin-top:14px;">'+
       '<h3>'+title+'</h3>'+
       modeToggle+
       pdfField+
       '<div class="field-row">'+
         numeroField+
-        '<div class="field"><label>Proyecto</label><input id="of_proyecto" value="'+esc(editing?editing.proyecto:'')+'" placeholder="509-037 · TAC DEI"></div>'+
+        '<div class="field"><label>Proyecto</label><input id="of_proyecto" value="'+esc(editing?editing.proyecto:(pf?pf.proyecto:''))+'" placeholder="509-037 · TAC DEI"></div>'+
       '</div>'+
       '<div class="field"><label>Tienda / dónde se recoge</label><select id="of_store">'+storeOptions+'</select></div>'+
-      '<div class="field"><label>'+(isItem?'Qué se recoge (descripción)':'Materiales (resumen)')+'</label><input id="of_desc" '+(isItem?'required':'')+' value="'+esc(editing?editing.descripcion:'')+'" placeholder="'+(isItem?'Ej. Repuesto retirado en el taller':'Ej. Ductería — ducto flexible 16&quot;')+'"></div>'+
+      '<div class="field"><label>'+(isItem?'Qué se recoge (descripción)':'Materiales (resumen)')+'</label><input id="of_desc" '+(isItem?'required':'')+' value="'+esc(editing?editing.descripcion:(pf?pf.descripcion:''))+'" placeholder="'+(isItem?'Ej. Repuesto retirado en el taller':'Ej. Ductería — ducto flexible 16&quot;')+'"></div>'+
       '<div class="field-row">'+
         '<div class="field"><label>Criticidad de entrega</label><select id="of_crit">'+
           '<option value="alta"'+(crit==='alta'?' selected':'')+'>Alta</option>'+
           '<option value="media"'+(crit==='media'?' selected':'')+'>Media</option>'+
           '<option value="baja"'+(crit==='baja'?' selected':'')+'>Baja</option>'+
         '</select></div>'+
-        '<div class="field"><label>Fecha entrega pactada</label><input type="date" id="of_fecha" value="'+esc(editing?editing.fechaPactada:'')+'"></div>'+
+        '<div class="field"><label>Fecha entrega pactada</label><input type="date" id="of_fecha" value="'+esc(editing?editing.fechaPactada:(pf?pf.fechaPactada:''))+'"></div>'+
       '</div>'+
-      '<div class="field"><label>Condición / nota de retiro en tienda</label><input id="of_cond" value="'+esc(editing?editing.condicionEntrega:'')+'" placeholder="Ej. Retirar martes 22 de setiembre"></div>'+
-      '<div class="field"><label>Dirección de entrega (destino)</label><input id="of_destino" value="'+esc(editing?editing.destino:'')+'" placeholder="Ej. Hospital San Vicente de Paul, portón..."></div>'+
+      '<div class="field"><label>Condición / nota de retiro en tienda</label><input id="of_cond" value="'+esc(editing?editing.condicionEntrega:(pf?pf.condicionEntrega:''))+'" placeholder="Ej. Retirar martes 22 de setiembre"></div>'+
+      destinoField+
       '<div class="field-row">'+
-        '<div class="field"><label>Quién recibe</label><input id="of_recNombre" value="'+esc(editing?editing.receptorNombre:'')+'" placeholder="Nombre"></div>'+
-        '<div class="field"><label>Teléfono de quien recibe</label><input id="of_recTel" value="'+esc(editing?editing.receptorTelefono:'')+'" placeholder="+506 ..."></div>'+
+        '<div class="field"><label>Quién recibe</label><input id="of_recNombre" value="'+esc(editing?editing.receptorNombre:(pf?pf.receptorNombre:''))+'" placeholder="Nombre"></div>'+
+        '<div class="field"><label>Teléfono de quien recibe</label><input id="of_recTel" value="'+esc(editing?editing.receptorTelefono:(pf?pf.receptorTelefono:''))+'" placeholder="+506 ..."></div>'+
       '</div>'+
       '<div class="form-actions">'+
         '<button type="submit" class="btn btn-primary">'+(editing?'Guardar cambios':(isItem?'Agregar ítem':'Agregar OC'))+'</button>'+
@@ -1512,6 +1657,42 @@
       var cancel = $('#storeCancel', root);
       if(cancel) cancel.onclick=function(){ editingStoreId=null; hardRender(); };
     }
+    var df = $('#destinoForm', root);
+    if(df){
+      df.onsubmit = async function(ev){
+        ev.preventDefault();
+        var msg = $('#destinoFormMsg', root);
+        if(msg){ msg.className='form-msg'; msg.textContent=''; }
+        var coords = parseCoords($('#df_coords',root).value);
+        var data = {
+          nombre: $('#df_nombre',root).value.trim(),
+          direccionCorta: $('#df_dir',root).value.trim(),
+          lat: coords? coords.lat: null,
+          lng: coords? coords.lng: null,
+          notas: $('#df_notas',root).value.trim()
+        };
+        if(!data.nombre || !data.direccionCorta){
+          if(msg){ msg.className='form-msg err'; msg.textContent='Completá al menos el nombre y la dirección corta.'; }
+          return;
+        }
+        var submitBtn = df.querySelector('button[type="submit"]');
+        if(submitBtn) submitBtn.disabled = true;
+        try{
+          await saveDestino(data);
+        }catch(e){
+          console.warn('saveDestino failed', e);
+          if(submitBtn) submitBtn.disabled = false;
+          if(msg){ msg.className='form-msg err'; msg.textContent=describeError(e); }
+          return;
+        }
+        editingDestinoId=null;
+        try{ hardRender(); }catch(e2){ console.warn('render after saveDestino failed', e2); }
+        var okMsg = document.getElementById('destinoFormMsg');
+        if(okMsg){ okMsg.className='form-msg ok'; okMsg.textContent='Lugar de entrega agregado ✓'; }
+      };
+      var dcancel = $('#destinoCancel', root);
+      if(dcancel) dcancel.onclick=function(){ editingDestinoId=null; hardRender(); };
+    }
     var pf = $('#puntoInicioForm', root);
     if(pf){
       pf.onsubmit = async function(ev){
@@ -1588,7 +1769,15 @@
             fillIfEmpty('#of_proyecto', guess.proyecto);
             fillIfEmpty('#of_desc', guess.descripcion);
             fillIfEmpty('#of_fecha', guess.fechaPactada);
-            fillIfEmpty('#of_destino', guess.destino);
+            // #of_destino es un <select>: solo lo tocamos si el texto leído
+            // coincide con un lugar de entrega ya guardado.
+            (function(){
+              var elDest = $('#of_destino', root);
+              if(elDest && !elDest.value && guess.destino){
+                var m = matchByName(destinos, guess.destino);
+                if(m){ elDest.value = m.id; filledAny = true; }
+              }
+            })();
             fillIfEmpty('#of_recNombre', guess.receptorNombre);
             fillIfEmpty('#of_recTel', guess.receptorTelefono);
             if(status){
@@ -1605,6 +1794,22 @@
         ev.preventDefault();
         var msg = $('#ocFormMsg', root);
         if(msg){ msg.className='form-msg'; msg.textContent=''; }
+        var editingForSubmit = ocs.find(function(o){return o.id===editingOcId;});
+        var destSel = $('#of_destino',root).value;
+        var destinoId = null, destino = '', destinoLat = null, destinoLng = null;
+        if(destSel){
+          var dObj = destinos.find(function(d){return d.id===destSel;});
+          if(dObj){
+            destinoId = dObj.id;
+            destino = dObj.nombre + (dObj.direccionCorta? (' — '+dObj.direccionCorta) : '');
+            destinoLat = (dObj.lat!=null) ? dObj.lat : null;
+            destinoLng = (dObj.lng!=null) ? dObj.lng : null;
+          }
+        } else if(editingForSubmit && editingForSubmit.destino && !editingForSubmit.destinoId){
+          // no se eligió nada nuevo: conservamos el texto libre que ya tenía
+          // esta OC de antes de que existiera el picklist de destinos.
+          destino = editingForSubmit.destino;
+        }
         var data = {
           tipo: formMode,
           numero: $('#of_numero',root).value.trim(),
@@ -1614,7 +1819,10 @@
           criticidad: $('#of_crit',root).value,
           fechaPactada: $('#of_fecha',root).value,
           condicionEntrega: $('#of_cond',root).value.trim(),
-          destino: $('#of_destino',root).value.trim(),
+          destinoId: destinoId,
+          destino: destino,
+          destinoLat: destinoLat,
+          destinoLng: destinoLng,
           receptorNombre: $('#of_recNombre',root).value.trim(),
           receptorTelefono: $('#of_recTel',root).value.trim()
         };
@@ -1654,6 +1862,7 @@
         }
         editingOcId=null;
         ocFormMode='oc';
+        prefillData=null; // ya se usó (o se descartó) el precompletado del artefacto
         try{ hardRender(); }catch(e3){ console.warn('render after saveOc failed', e3); }
         var okMsg = document.getElementById('ocFormMsg');
         if(okMsg){ okMsg.className='form-msg ok'; okMsg.textContent=(formMode==='item'?'Ítem agregado ✓':'OC agregada ✓'); }
@@ -1677,6 +1886,17 @@
         var id=b.getAttribute('data-id');
         var key='store-'+id;
         if(confirming[key]==='confirm'){ delete confirming[key]; deleteStore(id).catch(function(e){ console.warn('deleteStore failed', e); }); }
+        else if(confirming[key]!=='deny'){ flashConfirm(key,false); }
+      };
+    });
+    $all('[data-act="edit-destino"]', root).forEach(function(b){
+      b.onclick=function(){ editingDestinoId=b.getAttribute('data-id'); view='admin'; hardRender(); $('#destinoForm') && $('#destinoForm').scrollIntoView({behavior:'smooth', block:'center'}); };
+    });
+    $all('[data-act="del-destino"]', root).forEach(function(b){
+      b.onclick=function(){
+        var id=b.getAttribute('data-id');
+        var key='destino-'+id;
+        if(confirming[key]==='confirm'){ delete confirming[key]; deleteDestino(id).catch(function(e){ console.warn('deleteDestino failed', e); }); }
         else if(confirming[key]!=='deny'){ flashConfirm(key,false); }
       };
     });
