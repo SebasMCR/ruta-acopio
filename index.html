@@ -1494,8 +1494,22 @@
   function renderRutaHtml(){
     var activeStoreIds = {};
     ocs.forEach(function(o){ if(o.estado!=='entregado') activeStoreIds[o.storeId]=true; });
-    var routeStores = stores.filter(function(s){ return activeStoreIds[s.id] || !ocs.some(function(o){return o.storeId===s.id;}); });
+    var routeStores = stores.filter(function(s){ return activeStoreIds[s.id]; });
     if(!routeStores.length) routeStores = stores.slice();
+
+    // paradas de entrega: un lugar de entrega entra a la ruta si tiene alguna
+    // OC activa (pendiente o recogida, todavía no entregada) apuntando a él.
+    // Van después de las paradas de recolección, en el orden en que aparecen
+    // sus OCs.
+    var activeDestinoIds = {};
+    var destinoOrder = [];
+    ocs.forEach(function(o){
+      if(o.estado!=='entregado' && o.destinoId && !activeDestinoIds[o.destinoId]){
+        activeDestinoIds[o.destinoId] = true;
+        destinoOrder.push(o.destinoId);
+      }
+    });
+    var routeDestinos = destinoOrder.map(function(id){ return destinos.find(function(d){return d.id===id;}); }).filter(Boolean);
 
     var pend = ocs.filter(function(o){return o.estado==='pendiente';}).length;
     var recogidas = ocs.filter(function(o){return o.estado==='recogido';}).length;
@@ -1521,7 +1535,7 @@
       '</div>';
     }
 
-    if(!routeStores.length){
+    if(!routeStores.length && !routeDestinos.length){
       html += '<div class="empty">No hay paradas todavía. Agrega tiendas y OCs desde "Planificación".</div>';
       return html;
     }
@@ -1550,9 +1564,24 @@
       '</div>';
     });
 
-    var routeUrl = fullRouteUrl(routeStores);
+    routeDestinos.forEach(function(d, idx){
+      var stopOcs = ocs.filter(function(o){return o.destinoId===d.id && o.estado!=='entregado';});
+      var mapsUrl = storeMapsUrl(d);
+      var hasCrit = stopOcs.some(function(o){return o.criticidad==='alta' && o.estado!=='entregado';});
+      html += '<div class="stop" data-destino-id="'+d.id+'" style="border-left:3px solid var(--success);">'+
+        '<div class="stop-head">'+
+          '<div class="stop-num">'+(routeStores.length+idx+1)+'</div>'+
+          '<div><div class="stop-name">📦 '+esc(d.nombre)+(hasCrit?' <span class="chip chip-alta">Urgente</span>':'')+'</div><div class="stop-addr">'+esc(d.direccionCorta||'')+'</div></div>'+
+        '</div>'+
+        (mapsUrl? '<a class="btn btn-outline btn-sm" target="_blank" rel="noopener" href="'+mapsUrl+'">Abrir esta parada en Maps ↗</a>' : '') +
+        (stopOcs.length? stopOcs.map(function(o){return '<div class="oc-item">'+renderOcCard(o,true,collectorMode)+'</div>';}).join('') : '')+
+      '</div>';
+    });
+
+    var allStops = routeStores.concat(routeDestinos);
+    var routeUrl = fullRouteUrl(allStops);
     var originExplicit = (puntoInicio && puntoInicio.lat!=null) ? storeDestParam(puntoInicio) : null;
-    var routeUrlFromPunto = (routeUrl && originExplicit) ? fullRouteUrl(routeStores, originExplicit) : null;
+    var routeUrlFromPunto = (routeUrl && originExplicit) ? fullRouteUrl(allStops, originExplicit) : null;
     if(routeUrl){
       html += '<div class="route-cta">'+
         '<a class="btn btn-primary btn-block" target="_blank" rel="noopener" href="'+routeUrl+'">🧭 Abrir ruta completa (tu ubicación actual)</a>'+
