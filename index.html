@@ -1491,6 +1491,75 @@
   }
 
   // ================= RUTA (DRIVER) VIEW =================
+  // Combina paradas de recolección (tiendas) y de entrega (destinos) en un
+  // solo orden optimizado por cercanía real, en vez de poner siempre todas
+  // las tiendas antes que todos los destinos: en cada paso se elige la
+  // parada disponible más cercana a la parada anterior (arrancando desde el
+  // punto de salida). Un destino solo se considera "disponible" una vez que
+  // ya se visitaron todas las tiendas de las que dependen sus OCs todavía
+  // pendientes (no se puede entregar algo que no se ha recogido; una OC ya
+  // "recogida" no bloquea, porque el material ya va en el vehículo). Si no
+  // hay punto de salida georreferenciado, se mantiene el orden original
+  // (tiendas primero, después destinos).
+  function buildOrderedRoute(storesIn, destinosIn, ocsList, origin){
+    var items = [];
+    storesIn.forEach(function(s){ items.push({kind:'store', obj:s, lat:s.lat, lng:s.lng}); });
+    destinosIn.forEach(function(d){ items.push({kind:'destino', obj:d, lat:d.lat, lng:d.lng}); });
+
+    if(!origin || origin.lat==null || origin.lng==null) return items;
+    var withCoords = items.filter(function(it){ return it.lat!=null && it.lng!=null; });
+    var noCoords = items.filter(function(it){ return it.lat==null || it.lng==null; });
+    if(!withCoords.length) return items;
+
+    var storeIdsWithCoords = {};
+    withCoords.forEach(function(it){ if(it.kind==='store') storeIdsWithCoords[it.obj.id]=true; });
+    var requiredStoresByDestino = {};
+    ocsList.forEach(function(o){
+      if(o.estado==='pendiente' && o.destinoId && o.storeId && storeIdsWithCoords[o.storeId]){
+        if(!requiredStoresByDestino[o.destinoId]) requiredStoresByDestino[o.destinoId]={};
+        requiredStoresByDestino[o.destinoId][o.storeId]=true;
+      }
+    });
+
+    var visitedStoreIds = {};
+    function isAvailable(it){
+      if(it.kind==='store') return true;
+      var req = requiredStoresByDestino[it.obj.id];
+      if(!req) return true;
+      for(var sid in req){ if(!visitedStoreIds[sid]) return false; }
+      return true;
+    }
+
+    var remaining = withCoords.slice();
+    var ordered = [];
+    var curLat = origin.lat, curLng = origin.lng;
+    while(remaining.length){
+      var bestIdx=-1, bestDist=Infinity;
+      for(var i=0;i<remaining.length;i++){
+        if(!isAvailable(remaining[i])) continue;
+        var d = haversineKm(curLat,curLng,remaining[i].lat,remaining[i].lng);
+        if(d<bestDist){ bestDist=d; bestIdx=i; }
+      }
+      if(bestIdx===-1){
+        // caso raro: un destino depende de una tienda sin coordenadas — se
+        // toma la parada más cercana igual, para no trabar el cálculo
+        for(var j=0;j<remaining.length;j++){
+          var dj = haversineKm(curLat,curLng,remaining[j].lat,remaining[j].lng);
+          if(dj<bestDist){ bestDist=dj; bestIdx=j; }
+        }
+      }
+      var next = remaining.splice(bestIdx,1)[0];
+      ordered.push(next);
+      if(next.kind==='store') visitedStoreIds[next.obj.id]=true;
+      curLat=next.lat; curLng=next.lng;
+    }
+
+    // paradas sin coordenadas: no se pueden ubicar por cercanía, van al
+    // final (tiendas antes que destinos, para no romper el orden recoger→entregar)
+    var noCoordsStores = noCoords.filter(function(it){ return it.kind==='store'; });
+    var noCoordsDestinos = noCoords.filter(function(it){ return it.kind==='destino'; });
+    return ordered.concat(noCoordsStores).concat(noCoordsDestinos);
+  }
   function renderRutaHtml(){
     var activeStoreIds = {};
     ocs.forEach(function(o){ if(o.estado!=='entregado') activeStoreIds[o.storeId]=true; });
@@ -1544,41 +1613,45 @@
       html += '<div class="actions-row" style="margin:10px 0;"><button class="btn btn-outline btn-sm" type="button" data-act="recalc-orden">📍 Recalcular orden por cercanía a la salida</button></div>';
     }
 
-    routeStores.forEach(function(s, idx){
-      var stopOcs = ocs.filter(function(o){return o.storeId===s.id;});
-      var mapsUrl = storeMapsUrl(s);
-      var hasCrit = stopOcs.some(function(o){return o.criticidad==='alta' && o.estado!=='entregado';});
-      html += '<div class="stop" data-store-id="'+s.id+'">'+
-        '<div class="stop-head">'+
-          '<div class="stop-num">'+(idx+1)+'</div>'+
-          '<div><div class="stop-name">'+esc(s.nombre)+(hasCrit?' <span class="chip chip-alta">Urgente</span>':'')+'</div><div class="stop-addr">'+esc(s.direccionCorta||'')+'</div></div>'+
-          (canWrite!==false && !collectorMode? (
-            '<div class="stop-reorder">'+
-              '<button class="icon-btn" data-act="store-up" data-id="'+s.id+'" title="Subir">↑</button>'+
-              '<button class="icon-btn" data-act="store-down" data-id="'+s.id+'" title="Bajar">↓</button>'+
-            '</div>'
-          ):'') +
-        '</div>'+
-        (mapsUrl? '<a class="btn btn-outline btn-sm" target="_blank" rel="noopener" href="'+mapsUrl+'">Abrir esta parada en Maps ↗</a>' : '') +
-        (stopOcs.length? stopOcs.map(function(o){return '<div class="oc-item">'+renderOcCard(o,false,collectorMode)+'</div>';}).join('') : '<div class="hint" style="margin-top:8px;">Sin OCs asignadas a esta tienda.</div>')+
-      '</div>';
+    var orderedRoute = buildOrderedRoute(routeStores, routeDestinos, ocs, puntoInicio);
+
+    orderedRoute.forEach(function(it, idx){
+      if(it.kind==='store'){
+        var s = it.obj;
+        var stopOcs = ocs.filter(function(o){return o.storeId===s.id;});
+        var mapsUrl = storeMapsUrl(s);
+        var hasCrit = stopOcs.some(function(o){return o.criticidad==='alta' && o.estado!=='entregado';});
+        html += '<div class="stop" data-store-id="'+s.id+'">'+
+          '<div class="stop-head">'+
+            '<div class="stop-num">'+(idx+1)+'</div>'+
+            '<div><div class="stop-name">'+esc(s.nombre)+(hasCrit?' <span class="chip chip-alta">Urgente</span>':'')+'</div><div class="stop-addr">'+esc(s.direccionCorta||'')+'</div></div>'+
+            (canWrite!==false && !collectorMode? (
+              '<div class="stop-reorder">'+
+                '<button class="icon-btn" data-act="store-up" data-id="'+s.id+'" title="Subir">↑</button>'+
+                '<button class="icon-btn" data-act="store-down" data-id="'+s.id+'" title="Bajar">↓</button>'+
+              '</div>'
+            ):'') +
+          '</div>'+
+          (mapsUrl? '<a class="btn btn-outline btn-sm" target="_blank" rel="noopener" href="'+mapsUrl+'">Abrir esta parada en Maps ↗</a>' : '') +
+          (stopOcs.length? stopOcs.map(function(o){return '<div class="oc-item">'+renderOcCard(o,false,collectorMode)+'</div>';}).join('') : '<div class="hint" style="margin-top:8px;">Sin OCs asignadas a esta tienda.</div>')+
+        '</div>';
+      } else {
+        var d = it.obj;
+        var stopOcsD = ocs.filter(function(o){return o.destinoId===d.id && o.estado!=='entregado';});
+        var mapsUrlD = storeMapsUrl(d);
+        var hasCritD = stopOcsD.some(function(o){return o.criticidad==='alta' && o.estado!=='entregado';});
+        html += '<div class="stop" data-destino-id="'+d.id+'" style="border-left:3px solid var(--success);">'+
+          '<div class="stop-head">'+
+            '<div class="stop-num">'+(idx+1)+'</div>'+
+            '<div><div class="stop-name">📦 '+esc(d.nombre)+(hasCritD?' <span class="chip chip-alta">Urgente</span>':'')+'</div><div class="stop-addr">'+esc(d.direccionCorta||'')+'</div></div>'+
+          '</div>'+
+          (mapsUrlD? '<a class="btn btn-outline btn-sm" target="_blank" rel="noopener" href="'+mapsUrlD+'">Abrir esta parada en Maps ↗</a>' : '') +
+          (stopOcsD.length? stopOcsD.map(function(o){return '<div class="oc-item">'+renderOcCard(o,true,collectorMode)+'</div>';}).join('') : '')+
+        '</div>';
+      }
     });
 
-    routeDestinos.forEach(function(d, idx){
-      var stopOcs = ocs.filter(function(o){return o.destinoId===d.id && o.estado!=='entregado';});
-      var mapsUrl = storeMapsUrl(d);
-      var hasCrit = stopOcs.some(function(o){return o.criticidad==='alta' && o.estado!=='entregado';});
-      html += '<div class="stop" data-destino-id="'+d.id+'" style="border-left:3px solid var(--success);">'+
-        '<div class="stop-head">'+
-          '<div class="stop-num">'+(routeStores.length+idx+1)+'</div>'+
-          '<div><div class="stop-name">📦 '+esc(d.nombre)+(hasCrit?' <span class="chip chip-alta">Urgente</span>':'')+'</div><div class="stop-addr">'+esc(d.direccionCorta||'')+'</div></div>'+
-        '</div>'+
-        (mapsUrl? '<a class="btn btn-outline btn-sm" target="_blank" rel="noopener" href="'+mapsUrl+'">Abrir esta parada en Maps ↗</a>' : '') +
-        (stopOcs.length? stopOcs.map(function(o){return '<div class="oc-item">'+renderOcCard(o,true,collectorMode)+'</div>';}).join('') : '')+
-      '</div>';
-    });
-
-    var allStops = routeStores.concat(routeDestinos);
+    var allStops = orderedRoute.map(function(it){ return it.obj; });
     var routeUrl = fullRouteUrl(allStops);
     var originExplicit = (puntoInicio && puntoInicio.lat!=null) ? storeDestParam(puntoInicio) : null;
     var routeUrlFromPunto = (routeUrl && originExplicit) ? fullRouteUrl(allStops, originExplicit) : null;
